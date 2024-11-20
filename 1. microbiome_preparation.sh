@@ -38,7 +38,7 @@ exit
 ###For the samples from 2-step PCR
 cd (file position)
 
-conda activate /home/ke36dar/data/programs/cutadaptenv
+conda activate <path>/cutadaptenv
 
 # unify names
 for f in *_L001_R1_001.fastq.gz; do mv -- "$f" "${f%_L001_R1_001.fastq.gz}_R1.fastq.gz"; done
