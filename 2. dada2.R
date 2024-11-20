@@ -1,5 +1,5 @@
 getwd()
-setwd("/home/ke36dar/He/one_manu")
+setwd(<path>)
 
 library(dada2)
 packageVersion("dada2") #1.26
@@ -12,11 +12,11 @@ packageVersion("dplyr") #1.1.4
 library(stringr)
 packageVersion("stringr") #1.5.1
 
-##################one_run
-path <- "/home/ke36dar/He/one_manu"
+###one_run
+path <- "<path>"
 list.files(path)
 
-##Forward and reverse fastq
+###Forward and reverse fastq
 fnFs <- list.files(path, pattern="_R1.fastq.gz", full.names =TRUE)
 fnRs <- sort(list.files(path, pattern="_R2.fastq.gz", full.names =TRUE))
 sample.names <- sapply(strsplit(basename(fnRs), "_"), '[', 1)
@@ -42,7 +42,7 @@ sample.names <- str_replace(sample.names,"S1.PNK", "S1.JSC")
 sample.names <- str_replace(sample.names,"S2.PNK", "S2.JSC")
 sample.names <- str_replace(sample.names,"JSCJSC", "JSC")
 
-## inspection of read quality profiles
+### inspection of read quality profiles
 pdf("QualityProfilefnFs.pdf")
 plotQualityProfile(fnFs[996:1008])
 plotQualityProfile(fnFs[1009:1018])
@@ -89,13 +89,13 @@ pdf("errRplot.pdf")
 plotErrors(errR, nominalQ=TRUE)
 dev.off()
 
-##Dereplication of identical reads
+###Dereplication of identical reads
 derepFs <- derepFastq(filtFs, verbose =TRUE)
 derepRs <- derepFastq(filtRs, verbose=TRUE)
 names(derepFs) <- sample.names
 names(derepRs) <- sample.names
 
-##sample inference
+###sample inference
 
 dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
 dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
