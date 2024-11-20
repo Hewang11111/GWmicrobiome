@@ -1,0 +1,194 @@
+######################extract asv and fasta for the ASV presented in groundwater H14, H32, H41, H43, H51, H52, H53 using R as major_data.fasta and major_asv.tsv##########################
+###bash
+cd <path>
+conda activate picrust2
+picrust2_pipeline.py -s major_data.fasta -i major_asv.tsv -o picrust2_out --processes 10 --stratified --per_sequence_contrib
+
+#####################using the pathways_out in R###########################################################################################################################################
+setwd("/data/AquaData/ke36dar/one_manuscript/picrust2")
+
+library(phyloseq) #1.42.0
+library(stringr) #1.5.0
+library(vegan) #2.6-4
+library(ecodist) #2.1.3
+library(ggplot2) #3.4.4
+library(dplyr) #1.1.4
+library(reshape2) #1.4.4
+library(Hmisc) #5.1-1
+
+set_colors_well <- c("H14"= "green1" , # Well H14
+                     "H32"= "cyan4", # well H32
+                     "H41"= "#008DD2","H43"= "lightgoldenrod4",# well H41 and 43
+                     "H51"= "#FBC58C", "H52"= "mediumpurple3", "H53"= "plum") 
+                     
+well_var <- c("H14", "H32", "H41", "H43", "H51", "H52", "H53")
+
+
+pathway <- read.table("<path>/path_abun_unstrat_per_seq.tsv.tsv", header=TRUE)
+
+rownames(pathway)<-pathway$pathway
+pathway <- pathway[,-1]
+
+load("/data/AquaData/ke36dar/one_manuscript/analysis/all_data_using.phyloseq")
+
+data1 <- subset_samples(data, sample_data(data)$well %in% well_var)
+data1 <- prune_taxa(taxa_sums(data1)>0, data1)
+data <- data1
+rm(data1)
+
+meta <- data.frame(sample_data(data))
+#meta <- meta[,-c(1,9,10)] # site and sample name
+
+identical(rownames(meta), colnames(pathway))
+pathway1 <- pathway[,match(rownames(meta), colnames(pathway))]
+identical(rownames(meta), colnames(pathway1))
+
+rm(pathway)
+
+#pathway1 and meta with the same order
+
+#load descrip 
+des <- read.csv("/data/AquaData/ke36dar/onerun_20230720/path_unstrat_descrip.csv")
+which(!rownames(pathway1) %in% des$pathway)
+#####all be included in previous table
+
+##relative abundance
+pathway <- t(pathway1)/rowSums(t(pathway1))*100
+pathway <- t(pathway)
+
+#####################################################Fig. 5A and 3B#################################################################
+getwd()
+setwd("\\\\idiv-freenas.inf-bb.uni-jena.de/AquaData/ke36dar/one_manuscript/picrust2")
+
+turnover <- as.data.frame(matrix(c(NA), nrow=7, ncol=5))
+rownames(turnover) <- well_var
+colnames(turnover) <- c("P", "R2", "slope", "mantel_P", "mantel_R")
+
+for (i in well_var){
+  physeq <- subset_samples(data, sample_data(data)$well == i)
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  
+  pathway_t <- data.frame(t(pathway))
+  
+  pathway_well <- subset(pathway_t, rownames(pathway_t)%in%sample_names(physeq) )
+ 
+  dist_H <- bcdist(pathway_well)
+  similarity <- 1-dist_H
+  m_H <- as.matrix(similarity)
+  Day <- data.frame(cbind(rownames(sample_data(physeq)), sample_data(physeq)$date-(min(sample_data(physeq)$date)-1)))
+  rownames(Day) <- Day$X1
+  Day$X1 <- NULL
+  
+  dfH <- data.frame(cbind(similarity, dist(Day)))
+  names(dfH) <- c("similarity", "Day")
+  dfH$month <- ((dfH$Day+15)%/%30)
+  assign(paste0("dfH_", i), dfH)
+  
+  ag2 <- aggregate(similarity~month, data=dfH, FUN = function(x) c(mean=mean(x, na.rm=TRUE), se=std.error(x, na.rm=TRUE)))
+  ag2$mean <- ag2$similarity[,1]
+  ag2$se <- ag2$similarity[,2]
+  ag2 <-ag2[,-2]
+  ag2$smooth <- smooth(ag2$mean)
+  ag2$day <- ag2$month*30
+  
+  ggplot()+
+    geom_point(data=dfH,aes(x=Day, y=similarity), color="#A2D9F7")+
+    geom_smooth(data=dfH,aes(x=Day, y=similarity),method="lm", se=FALSE, color="black", linetype = "dashed")+
+    
+    geom_point(data=ag2, aes(x=day, y=mean), color="red", size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean-se, ymax=mean+se), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    geom_line(data=ag2, aes(x=day, y=smooth), color="blue", size=1, alpha=0.35)+
+    theme_classic()+
+    ylab("community similarity") + 
+    ylim(0.65,1)+
+    xlab("Day difference")+
+    theme(strip.text.x = element_text(size = 16))+
+    theme(strip.background =element_rect(fill="#A2D9F7"))+
+    theme(legend.position="none")+
+    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=14))+
+    scale_x_continuous(breaks=seq(0, 3650, 365))+
+    geom_vline(xintercept = seq(0, 3650, 365), linetype="dashed", 
+               color = "grey", size=0.5)
+  ggsave(paste0(i,"turnover_similarity_pathway.jpg"), width=7, height=5)
+  
+  model <- lm(dfH$similarity~dfH$Day)
+  sum <- summary(model)
+  assign(paste0("model_", i), model)
+  
+  turnover[which(well_var==i),1] <- sum$coefficients[8]
+  turnover[which(well_var==i),2] <- round(sum$adj.r.squared,2)
+  turnover[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  set.seed(100)
+  mantel <- mantel.rtest(dist_H, dist(Day))
+  turnover[which(well_var==i), 4] <- mantel$pvalue
+  turnover[which(well_var==i), 5] <- mantel$obs
+  
+  assign("turnover", turnover)
+}
+
+turnover$slope_y <- as.numeric(turnover$slope)*365
+
+
+dfH_all <- rbind(dfH_H14, dfH_H43, dfH_H41, dfH_H51, dfH_H32, dfH_H53,dfH_H52)
+
+dfH_all$well <- factor(dfH_all$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+
+ggplot(dfH_all, aes(well, similarity, col=well))+
+  geom_boxplot()+
+  ylim(0,1)+
+  scale_color_manual(values=set_colors_well)+
+  stat_summary(fun = mean, geom = "crossbar", width = 0.75, size = 0.5, color = "red")+
+  theme_classic()
+ggsave("temporal variability function.jpg", width=7, height=5)
+
+data.frame(dfH_all) %>%
+  group_by(well)%>%
+  summarise(me=mean(similarity),
+            se=sd(similarity))
+
+#####################################################Fig. 6+Supplementary Fig. 10#################################################################
+des <- des[des$pathway %in% rownames(pathway),]
+a <- levels(factor(des$Sub.Class1))[-1]
+
+  for (i in (1:length(a))){
+    des1 <- des[des$Sub.Class1 %in% a[i],]
+    path <- pathway[rownames(pathway)%in%des1$pathway,,drop=FALSE]
+    path <- data.frame(t(path))
+    meta1$i <- rowSums(path)
+    colnames(meta1)[..+i] <- a[i]
+    assign("meta1", meta1)
+  }
+
+###meta1 with all pathway information
+###DOM subset (results from DOM composition)
+getwd()
+DOM <- read.csv("<path>/DOM.csv",sep = ",")
+rownames(DOM) <- DOM$X
+DOM <- DOM[,-1]
+DOM_cla <- read.csv("<path>/DOM_classification_rep.csv",sep = ",")
+rownames(DOM_cla) <- DOM_cla$X
+DOM_cla <- DOM_cla[,-1]
+b <- colnames(DOM_cla)[-c(1:7)]
+
+for (i in (1:length(b))){
+  dom_sub <- DOM_cla[DOM_cla[,(7+i)] != "",]
+  dom1 <- DOM[rownames(DOM)%in%rownames(dom_sub),-c(1:4),drop=FALSE]
+  dom1 <- data.frame(t(dom1))
+  dom1$i <- rowSums(dom1)
+  
+  meta1$i <- NA
+  meta1$i <- dom1$i[match(rownames(meta1), rownames(dom1))]
+  
+  colnames(meta1)[..+i] <- b[i]
+   assign("meta1", meta1)
+}
+
+###plots between pathway and DOM subset
+##e.g., amino acid biosynthesis
+ggplot(meta1, aes(well, `Amino Acid Biosynthesis`, col=well))+
+  geom_boxplot()+
+  scale_color_manual(values=set_colors_well)+
+  stat_summary(fun = mean, geom = "crossbar", width = 0.75, size = 0.5, color = "red")+
+  theme_classic()
+ggsave("boxplot_amino synthesis.jpg", width=7, height=5)
