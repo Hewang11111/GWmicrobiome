@@ -47,7 +47,7 @@ d1 <- phyloseq::distance(data, "bray")
 set.seed(999)
 adonis2(d1~sample, data=meta)
 
-#####################################################Supplementary Fig. 1B ######################################################################################
+#####################################################Supplementary Fig. 1C ######################################################################################
 library(ggfortify)
 library(factoextra)
 
@@ -73,6 +73,81 @@ autoplot(pca_major, data=ds2,  color="well", size=3,loadings=TRUE, loadings.colo
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 ggsave("PCA_major_nolabel.jpg", width=8, height=6)
 
+#####################################################Supplementary Fig. 1B ###########################################################
+turnover_env <- as.data.frame(matrix(c(NA), nrow=7, ncol=7))
+rownames(turnover_env) <- well_var
+colnames(turnover_env) <- c("P", "R2", "slope", "mantel_P", "mantel_R", "mantel_bac_P", "mantel_bac_R")
+
+for (i in well_var){
+  physeq <- subset_samples(data, sample_data(data)$well==i )
+  meta_well <- data.frame(sample_data(physeq))[,c(...)]
+  meta_well <- na.omit(meta_well)
+  
+  physeq <- subset_samples(physeq, sample_names(physeq)%in%rownames(meta_well))
+  
+  meta_de <- decostand(meta_well, method = "standardize")
+  meta_dis <- vegdist(meta_de, method="euclidean")
+  meta_dis1 <- (meta_dis-min(meta_dis))/(max(meta_dis)-min(meta_dis))
+  meta_sim <- 1-meta_dis1
+  
+  Day <- data.frame(cbind(rownames(sample_data(physeq)), sample_data(physeq)$date-(min(sample_data(physeq)$date)-1)))
+  rownames(Day) <- Day$X1
+  Day$X1 <- NULL
+  
+  dfH <- data.frame(cbind(meta_sim, dist(Day)))
+  dfH$well <- i
+  names(dfH) <- c("similarity", "Day", "well")
+  assign(paste0(i,"dfH_env"), dfH)
+  
+  dfH$month <- ((dfH$Day+15)%/%30)
+  
+  ag2 <- aggregate(similarity~month, data=dfH, FUN = function(x) c(mean=mean(x, na.rm=TRUE), se=std.error(x, na.rm=TRUE)))
+  ag2$mean <- ag2$similarity[,1]
+  ag2$se <- ag2$similarity[,2]
+  ag2 <-ag2[,-2]
+  ag2$smooth <- smooth(ag2$mean)
+  ag2$day <- ag2$month*30
+
+  ggplot()+
+    geom_point(data=dfH,aes(x=Day, y=similarity), color="#A2D9F7")+
+    geom_smooth(data=dfH,aes(x=Day, y=similarity),method="lm", se=FALSE, color="black", linetype = "dashed")+
+    
+    geom_point(data=ag2, aes(x=day, y=mean), color="red", size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean-se, ymax=mean+se), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    geom_line(data=ag2, aes(x=day, y=smooth), color="blue", size=1, alpha=0.35)+
+    theme_classic()+
+    ylab("community similarity") + 
+    xlab("Day difference")+
+    theme(strip.text.x = element_text(size = 16))+
+    theme(strip.background =element_rect(fill="#A2D9F7"))+
+    theme(legend.position="none")+
+    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=14))+
+    scale_x_continuous(breaks=seq(0, 3650, 365))+
+    geom_vline(xintercept = seq(0, 3650, 365), linetype="dashed", 
+               color = "grey", size=0.5)
+  ggsave(paste0(i,"_euclidean_meta_15.jpg"), width=7, height=5)
+  
+  model <- lm(dfH$similarity~dfH$Day)
+  sum <- summary(model)
+  
+  turnover_env[which(well_var==i),1] <- sum$coefficients[8]
+  turnover_env[which(well_var==i),2] <- round(sum$adj.r.squared,2)
+  turnover_env[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  set.seed(100)
+  mantel <- mantel.rtest(meta_dis1, dist(Day))
+  turnover_env[which(well_var==i), 4] <- mantel$pvalue
+  turnover_env[which(well_var==i), 5] <- mantel$obs
+  
+  phy_dis <- phyloseq::distance(physeq, "bray")
+  
+  set.seed(100)
+  mantel <- mantel.rtest(meta_dis1, phy_dis)
+  turnover_env[which(well_var==i), 6] <- mantel$pvalue
+  turnover_env[which(well_var==i), 7] <- mantel$obs  
+}
+
+turnover_env$year <- as.numeric(turnover_env$slope)*365
 #####################################################Supplementary Fig. 2 ########################################################################################
 major <- subset_samples(data, sample_data(data)$well %in% well_var)
 major <- prune_taxa(taxa_sums(major)>0, major)
@@ -338,14 +413,16 @@ for (i in well_var){
   model <- lm(dfH$similarity~dfH$Day)
   sum <- summary(model)
   
-  turnover[which(well_var==i),1] <- sum$coefficients[8]
-  turnover[which(well_var==i),2] <- round(sum$adj.r.squared,2)
-  turnover[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
+  turnover[which(well_var==i),1] <- sum$coefficients[8] ##P
+  turnover[which(well_var==i),2] <- round(sum$adj.r.squared,2) ##R2
+  turnover[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2) ##slope rate
   
   mantel <- mantel.rtest(phy_dis, dist(Day))
   turnover[which(well_var==i), 4] <- mantel$pvalue
   turnover[which(well_var==i), 5] <- mantel$obs
-  
+
+  turnover[which(well_var==i), 6] <- sum$coefficients[1] ##intercept
+
   assign("turnover", turnover)
   
 }
@@ -391,6 +468,28 @@ ggplot(dfH_all_month, aes(well, dis, color=well))+
   theme_classic()
 ggsave("short_term_variability.jpg", width=7, height=5)
 
+#####################################################Fig. 2B#################################################################
+###using slope rate and intercept in table turnover to estimate the total similarity between samples with 3650 days interval
+### short-term variation proportion = short-term variation/(1-(total_similarity)) ###short_long$short
+### long-term variation proportion = 1-(short-term variation)
+
+short_long <- as.data.frame(matrix(c(NA), nrow=7, ncol=2))
+rownames(short_long) <- well_var
+colnames(short_long) <- c("short","long")
+
+short_long$short <- c(0.68,0.50,0.61,0.60, 0.61, 0.28, 0.34)
+short_long$long <- 1-short_long$short
+
+short_long$well <- well_var
+short_long$well <- factor(within_above_year$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+
+short_long_melt <- melt(short_long)
+
+ggplot(short_long_melt)+
+  geom_col(aes(well, value, fill=variable),position="dodge")+
+  scale_fill_manual(values=c("#4e79a7","#66CDAA"))+
+  theme_bw()
+ggsave("temporal scale difference.jpg",width = 8, height = 6)
 #####################################################Fig. 2C#################################################################
 meta_major$well <- factor(meta_major$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
 
@@ -646,81 +745,7 @@ for (i in well_var){
   
 }
 
-#####################################################Supplementary Fig. 1B ###########################################################
-turnover_env <- as.data.frame(matrix(c(NA), nrow=7, ncol=7))
-rownames(turnover_env) <- well_var
-colnames(turnover_env) <- c("P", "R2", "slope", "mantel_P", "mantel_R", "mantel_bac_P", "mantel_bac_R")
 
-for (i in well_var){
-  physeq <- subset_samples(data, sample_data(data)$well==i )
-  meta_well <- data.frame(sample_data(physeq))[,c(10,13,15:20, 23:27,29, 31)]
-  meta_well <- na.omit(meta_well)
-  
-  physeq <- subset_samples(physeq, sample_names(physeq)%in%rownames(meta_well))
-  
-  meta_de <- decostand(meta_well, method = "standardize")
-  meta_dis <- vegdist(meta_de, method="euclidean")
-  meta_dis1 <- (meta_dis-min(meta_dis))/(max(meta_dis)-min(meta_dis))
-  meta_sim <- 1-meta_dis1
-  
-  Day <- data.frame(cbind(rownames(sample_data(physeq)), sample_data(physeq)$date-(min(sample_data(physeq)$date)-1)))
-  rownames(Day) <- Day$X1
-  Day$X1 <- NULL
-  
-  dfH <- data.frame(cbind(meta_sim, dist(Day)))
-  dfH$well <- i
-  names(dfH) <- c("similarity", "Day", "well")
-  assign(paste0(i,"dfH_env"), dfH)
-  
-  dfH$month <- ((dfH$Day+15)%/%30)
-  
-  ag2 <- aggregate(similarity~month, data=dfH, FUN = function(x) c(mean=mean(x, na.rm=TRUE), se=std.error(x, na.rm=TRUE)))
-  ag2$mean <- ag2$similarity[,1]
-  ag2$se <- ag2$similarity[,2]
-  ag2 <-ag2[,-2]
-  ag2$smooth <- smooth(ag2$mean)
-  ag2$day <- ag2$month*30
-
-  ggplot()+
-    geom_point(data=dfH,aes(x=Day, y=similarity), color="#A2D9F7")+
-    geom_smooth(data=dfH,aes(x=Day, y=similarity),method="lm", se=FALSE, color="black", linetype = "dashed")+
-    
-    geom_point(data=ag2, aes(x=day, y=mean), color="red", size=2, alpha=0.35)+
-    geom_errorbar(data=ag2,aes(x=day,ymin=mean-se, ymax=mean+se), colour="red", width=0.2, size=0.2, alpha=0.35)+
-    geom_line(data=ag2, aes(x=day, y=smooth), color="blue", size=1, alpha=0.35)+
-    theme_classic()+
-    ylab("community similarity") + 
-    xlab("Day difference")+
-    theme(strip.text.x = element_text(size = 16))+
-    theme(strip.background =element_rect(fill="#A2D9F7"))+
-    theme(legend.position="none")+
-    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=14))+
-    scale_x_continuous(breaks=seq(0, 3650, 365))+
-    geom_vline(xintercept = seq(0, 3650, 365), linetype="dashed", 
-               color = "grey", size=0.5)
-  ggsave(paste0(i,"_euclidean_meta_15.jpg"), width=7, height=5)
-  
-  model <- lm(dfH$similarity~dfH$Day)
-  sum <- summary(model)
-  
-  turnover_env[which(well_var==i),1] <- sum$coefficients[8]
-  turnover_env[which(well_var==i),2] <- round(sum$adj.r.squared,2)
-  turnover_env[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
-  
-  set.seed(100)
-  mantel <- mantel.rtest(meta_dis1, dist(Day))
-  turnover_env[which(well_var==i), 4] <- mantel$pvalue
-  turnover_env[which(well_var==i), 5] <- mantel$obs
-  
-  phy_dis <- phyloseq::distance(physeq, "bray")
-  
-  set.seed(100)
-  mantel <- mantel.rtest(meta_dis1, phy_dis)
-  turnover_env[which(well_var==i), 6] <- mantel$pvalue
-  turnover_env[which(well_var==i), 7] <- mantel$obs  
-}
-
-turnover_env$year <- as.numeric(turnover_env$slope)*365
 
 
 
