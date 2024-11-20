@@ -1,1 +1,370 @@
+getwd()
+setwd("<path>")
 
+library(vegan)
+library(phyloseq)
+library(ecodist)
+library(ggplot2)
+library(ape)
+library(dplyr)
+library(reshape2)
+library(ade4)
+library(Hmisc)
+library(plotrix)
+
+load("<path>/all_data_using.phyloseq")
+
+well_var <- c("H14", "H32", "H41", "H43", "H51", "H52", "H53")
+
+set_colors_well <- c("H14"= "green1" , # Well H14
+                     "H32"= "cyan4", # well H32
+                     "H41"= "#008DD2","H43"= "lightgoldenrod4",# well H41 and 43
+                     "H51"= "#FBC58C", "H52"= "mediumpurple3", "H53"= "plum", "S1"= "#FF0000",  "S2"= "#BF3F00"
+) 
+
+#####################################process dom_lcms (preparation)#####################################################
+for (i in well_var) {
+  dom <- read.csv(paste0("<path>/",i,".csv"))
+  assign(paste0(i, "_dom"), dom)
+}
+
+##reformat and change NA to 0
+for (i in well_var){
+  dom <- get(paste0(i, "_dom"))
+  rownames(dom) <- dom$X
+  dom <- dom[,-1]
+  dom[is.na(dom)] <-0
+  assign(paste0(i, "_dom"),dom)
+}
+
+######unique date
+for (i in well_var){
+  dom <- get(paste0(i, "_dom"))
+  data <- unique(substr(colnames(dom), 1, 11))
+  assign(paste0(i,"_data"),data)
+}
+
+
+####new dataframe 
+for (i in well_var){
+  dom <- get(paste0(i, "_dom"))
+  data <- get(paste0(i, "_data"))
+  frame <- data.frame(matrix(NA, ncol=length(data), nrow=nrow(dom)))
+  rownames(frame) <- rownames(dom)
+  colnames(frame) <- data
+  assign(paste0(i, "_dom_ave"), frame)
+}
+
+###get a mean values of all the values collected from same sampling
+for (k in well_var){
+  j=1
+  dom <- get(paste0(k, "_dom"))
+  data <- get(paste0(k, "_data"))
+  dom_new <- get(paste0(k, "_dom_ave"))
+  for (i in data){
+    
+    dom_new[,j] <-  rowMeans(dom[,grepl(i, colnames(dom)), drop=FALSE], na.rm=TRUE)
+    j <- j+1
+    assign(paste0(k, "_dom_ave"), dom_new)
+  }}
+
+#######output in csv to change rownames
+for (i in well_var){
+  dom <- get(paste0(i, "_dom_ave"))
+  write.csv(dom, paste0(i, "_dom_ave.csv"))
+}
+
+####change colnames from character to campaign
+point <- read.csv("metabolites_date1.csv")
+
+for (i in well_var){
+  dom <- get(paste0(i, "_dom_ave"))
+  colnames(dom) <- point$X[match(colnames(dom), point$colnames)]
+  assign(paste0(i, "_dom_ave"),dom)
+}
+
+load("/data/AquaData/ke36dar/one_manuscript/analysis/all_data_using.phyloseq")
+
+
+for (i in well_var){
+  dom <- get(paste0(i, "_dom_ave"))
+  physeq <- subset_samples(data, sample_data(data)$well == i)
+  physeq <- subset_samples(physeq, sample_data(physeq)$campaign %in% colnames(dom))
+  
+  dom <- dom[,colnames(dom) %in% sample_data(physeq)$campaign]
+  dom_lc <- dom[,sample_data(physeq)$campaign]
+  assign(paste0(i, "_dom_LC"), dom_lc)
+}
+
+save.image("preparation.RData")
+
+for (i in well_var){
+  dom <- get(paste0(i, "_dom_LC"))
+  saveRDS(dom, paste0(i,"_dom.rds"))
+}
+
+#####################################################Starting a new script#################################################################
+#####################################################Supplementary Fig. 5B and 6C#################################################################
+load(".../all_data_using.phyloseq")
+
+well_var <- c("H14", "H32", "H41", "H43", "H51", "H52", "H53")
+
+for (i in well_var) {
+  dom <- readRDS(paste0(i,"_dom.rds"))
+  assign(paste0("dom_LC_", i), dom)
+}
+
+set_colors_well <- c("H14"= "green1" , # Well H14
+                     "H32"= "cyan4", # well H32
+                     "H41"= "#008DD2","H43"= "lightgoldenrod4",# well H41 and 43
+                     "H51"= "#FBC58C", "H52"= "mediumpurple3", "H53"= "plum", "S1"= "#FF0000",  "S2"= "#BF3F00"
+) 
+
+
+
+smooth <- function(y ){
+  h <- c(head(y, 1), mean(head(y, 3)))
+  t <- c(mean(tail(y, 3)), tail(y, 1))
+  m <- stats::convolve(y, rep(1/5, 5), type = "filter")
+  c(h, m, t)
+}
+
+turnover <- as.data.frame(matrix(c(NA), nrow=7, ncol=16))
+rownames(turnover) <- well_var
+colnames(turnover) <- c("time_dom_P", "time_dom_R2", "time_dom_slope", "time_dom_mantel_P", "time_dom_mantel_R",
+                        "time_bac_P", "time_bac_R2", "time_bac_slope", "time_bac_mantel_P", "time_bac_mantel_R",
+                        "bac_dom_mantel_P", "bac_dom_mantel_R","bac_dom_ori_P", "bac_dom_ori_R2", "bac_dom_agg_P", "bac_dom_agg_R2"
+)
+
+
+for (i in well_var){
+  dom <- get(paste0("dom_LC_", i))
+  physeq <- subset_samples(data, sample_data(data)$well == i)
+  physeq <- subset_samples(physeq, sample_data(physeq)$campaign %in% colnames(dom))
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  physeq <- transform_sample_counts(physeq, function(x)x/sum(x))
+  
+  dom <- dom[,colnames(dom) %in% sample_data(physeq)$campaign]
+  dom <- data.frame(t(dom))
+  dom <- dom/rowSums(dom)
+  
+  dist_H <- bcdist(dom)
+  similar <- 1-dist_H
+  phy_dis <- phyloseq::distance(physeq, "bray")
+  bac_similar <- 1-phy_dis
+  
+  
+  Day <- data.frame(cbind(rownames(sample_data(physeq)), sample_data(physeq)$date-(min(sample_data(physeq)$date)-1)))
+  rownames(Day) <- Day$X1
+  Day$X1 <- NULL
+  model <- lm(similar~dist(Day))
+  sum <- summary(model)
+  dfH <- data.frame(cbind(similar, bac_similar, dist(Day)))
+  dfH$well <- i
+  names(dfH) <- c("dom_sim", "bac_sim","Day", "well")
+  assign(paste0("dfH_",i), dfH)
+  
+  for (j in nrow(dfH)){
+    dfH$month <- ((dfH$Day+15)%/%30)
+  }
+  
+  ag2 <- dfH %>%
+    group_by(month) %>%
+    summarise(mean_dom=mean(dom_sim, na.rm=TRUE),
+              mean_bac=mean(bac_sim, na.rm=TRUE),
+              se_dom = std.error(dom_sim, na.rm=TRUE),
+              se_bac=std.error(bac_sim, na.rm=TRUE)
+    )
+  
+  
+  ag2$smooth_dom <- smooth(ag2$mean_dom)
+  ag2$smooth_bac <- smooth(ag2$mean_bac)
+  ag2$day <- ag2$month*30
+  
+  model <- lm(dfH$dom_sim~dfH$Day)
+  sum <- summary(model)
+  
+  turnover[which(well_var==i),1] <- sum$coefficients[8]
+  turnover[which(well_var==i),2] <- round(sum$adj.r.squared,2)
+  turnover[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  set.seed(100)
+  mantel <- mantel.rtest(dist_H, dist(Day))
+  turnover[which(well_var==i), 4] <- mantel$pvalue
+  turnover[which(well_var==i), 5] <- mantel$obs
+  
+  model <- lm(dfH$bac_sim~dfH$Day)
+  sum <- summary(model)
+  
+  turnover[which(well_var==i),6] <- sum$coefficients[8]
+  turnover[which(well_var==i),7] <- round(sum$adj.r.squared,2)
+  turnover[which(well_var==i),8] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  set.seed(100)
+  mantel <- mantel.rtest(phy_dis, dist(Day))
+  turnover[which(well_var==i), 9] <- mantel$pvalue
+  turnover[which(well_var==i), 10] <- mantel$obs
+  
+  set.seed(100)
+  mantel <- mantel.rtest(dist_H, phy_dis)
+  turnover[which(well_var==i), 11] <- mantel$pvalue
+  turnover[which(well_var==i), 12] <- mantel$obs
+  
+  a <- rcorr(dfH$dom_sim, dfH$bac_sim, type="pearson")
+  
+  turnover[which(well_var==i),13] <- a$P[2]
+  turnover[which(well_var==i),14] <- round(a$r[2],2)
+  
+  a <- rcorr(ag2$smooth_dom, ag2$smooth_bac, type="pearson")
+  
+  turnover[which(well_var==i),15] <- a$P[2]
+  turnover[which(well_var==i),16] <- round(a$r[2],2)
+  
+  
+  assign("turnover", turnover)
+  
+  
+  ggplot()+
+    geom_point(data=dfH,aes(x=Day, y=dom_sim), color="#FFCC99", shape=17)+
+    geom_smooth(data=dfH,aes(x=Day, y=dom_sim),method="lm", se=FALSE, color="black", linetype = "solid")+
+    geom_point(data=dfH,aes(x=Day, y=bac_sim), color="#A2D9F7")+
+    geom_smooth(data=dfH,aes(x=Day, y=bac_sim),method="lm", se=FALSE, color="black", linetype = "dashed")+
+    
+    geom_point(data=ag2, aes(x=day, y=mean_dom), color="red",shape=17, size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean_dom-se_dom, ymax=mean_dom+se_dom), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    geom_point(data=ag2, aes(x=day, y=mean_bac), color="red", size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean_bac-se_bac, ymax=mean_bac+se_bac), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    
+    geom_line(data=ag2, aes(x=day, y=smooth_dom), color="blue", size=1, alpha=0.6, linetype = "solid")+
+    geom_line(data=ag2, aes(x=day, y=smooth_bac), color="blue", size=1, alpha=0.6, linetype = "dashed")+
+    theme_classic()+
+    ylim(0,1)+
+    ylab("community similarity") + 
+    xlab("Day difference")+
+    theme(strip.text.x = element_text(size = 16))+
+    theme(strip.background =element_rect(fill="#A2D9F7"))+
+    theme(legend.position="none")+
+    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=14))+
+    scale_x_continuous(breaks=seq(0, 3285, 365))+
+    geom_vline(xintercept = seq(0, 3285, 365), linetype="dashed", 
+               color = "grey", size=0.5)
+  ggsave(paste0(i,"turnover_similarity.jpg"), width=7, height=5)
+  
+  
+}
+
+as.numeric(turnover$time_dom_slope)*365
+as.numeric(turnover$time_bac_slope)*365
+
+dfH_all <- rbind(dfH_H14, dfH_H32, dfH_H41, dfH_H43, dfH_H51, dfH_H52, dfH_H53)
+
+dfH_all$well <- factor(dfH_all$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+ggplot(dfH_all, aes(well, dom_sim, color=well))+
+  geom_boxplot()+
+  ylim(0,1)+
+  scale_color_manual(values=set_colors_well)+
+  stat_summary(fun = mean, geom = "crossbar", width = 0.75, size = 0.5, color = "red")+
+  theme_classic()
+ggsave("temporal stability.jpg", width=5, height=4)
+
+
+dfH_all$group <- "variable"
+dfH_all$group[dfH_all$well %in% c("H53", "H52")] <- "stable" 
+wilcox.test(dom_sim ~ group, data=dfH_all[dfH_all$well %in% c("H43", "H41", "H51", "H53", "H52"),])
+
+data.frame(dfH_all) %>%
+  group_by(well)%>%
+  summarise(me=mean(dom_sim),
+            se=sd(dom_sim))
+
+##################################################### alpha diversity of metabolome#################################################################
+for (i in well_var){
+  dom <- get(paste0("dom_LC_", i))
+  shannon_dom <- data.frame(cbind(colnames(dom),diversity(t(dom), index="shannon"), i))
+  colnames(shannon_dom) <- c("campaign", "Shannon", "well")
+  shannon_dom$richnnes <- specnumber(t(dom))
+  assign(paste0("alpha_", i), shannon_dom)
+}
+
+##################################################### PcoA of metabolome#################################################################
+
+for (i in well_var){
+  dom <- get(paste0("dom_LC_", i))
+  physeq <- subset_samples(data, sample_data(data)$well == i)
+  physeq <- subset_samples(physeq, sample_data(physeq)$campaign %in% colnames(dom))
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  
+  dom <- dom[,colnames(dom) %in% sample_data(physeq)$campaign]
+  dom <- data.frame(t(dom))
+  dom <- dom/rowSums(dom)
+  
+  dist_H <- bcdist(dom)
+  
+  pcoa_result <- cmdscale(dist_H, eig=TRUE, k=2)
+  pcoa1_scores <- pcoa_result$points[,1]
+  
+  assign(paste0("pcoa1_", i), pcoa1_scores)
+}
+
+for (i in well_var){
+  dom <- get(paste0("dom_LC_", i))
+  alpha <- get(paste0("alpha_", i))
+  meta <- get(paste0("meta_dom_", i))
+  pcoa1 <- get(paste0("pcoa1_", i))
+  
+  meta$metabolome_shannon <- as.numeric(alpha$Shannon)[match(meta$campaign, alpha$campaign)]
+  meta$metabolome_pcoa1 <- pcoa1
+  
+  assign(paste0("meta_dom_", i),meta)
+}
+
+####create a dataframe, R2 and P for single dom_shannon and pcoa1, and them together.
+dbrda_test <- as.data.frame(matrix(c(NA), nrow=7, ncol=8))
+rownames(dbrda_test) <- well_var
+colnames(dbrda_test) <- c("shannon_dom_P", "shannon_dom_Adj_R2", "pcoa1_dom_P", "pcoa1_dom_Adj_R2", "Shannon_pcoa1_P",
+                        "Shannon_pcoa1_Adj_R2", "all_env_P", "all_env_Adj_R2")
+
+for (i in well_var){
+  dom <- get(paste0("dom_LC_", i))
+  meta1 <- get(paste0("meta_dom_", i))
+  meta1 <- meta1[,c(10,13,15:20, 23:27,29, 31,48,52, 53, 54)]
+  physeq <- subset_samples(data, sample_data(data)$well == i)
+  physeq <- subset_samples(physeq, sample_data(physeq)$campaign %in% colnames(dom))
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  physeq <- transform_sample_counts(physeq, function(x)x/sum(x))
+  
+  otu <- t(data.frame(otu_table(physeq)))
+  meta1$season2 <- as.factor(meta1$season2)
+  
+  numeric_vars <- meta1[, -which(names(meta1) == "season2")]
+  env.z <- decostand(numeric_vars, method = "standardize")
+  
+  env_data <- cbind(env.z, season2 = meta1$season2)
+  
+  ####Shannon_dom
+  set.seed(999)
+  spe.rda <- dbrda(otu ~ metabolome_shannon, data = env_data, na.action=na.omit, distance="bray")
+  dbrda_test[which(well_var==i),1] <- anova.cca(spe.rda)$`Pr(>F)`[1]
+  dbrda_test[which(well_var==i),2] <- RsquareAdj(spe.rda)[["adj.r.squared"]]
+  
+  ####pcoa1_dom
+  set.seed(999)
+  spe.rda <- dbrda(otu ~ metabolome_pcoa1, data = env_data, na.action=na.omit, distance="bray")
+  dbrda_test[which(well_var==i),3] <- anova.cca(spe.rda)$`Pr(>F)`[1]
+  dbrda_test[which(well_var==i),4] <- RsquareAdj(spe.rda)[["adj.r.squared"]]
+  
+  ####pcoa1 and shannon
+  set.seed(999)
+  spe.rda <- dbrda(otu ~ metabolome_shannon+metabolome_pcoa1, data = env_data, na.action=na.omit, distance="bray")
+  dbrda_test[which(well_var==i),5] <- anova.cca(spe.rda)$`Pr(>F)`[1]
+  dbrda_test[which(well_var==i),6] <- RsquareAdj(spe.rda)[["adj.r.squared"]]
+
+  ####all env including 15 hydrochemical parameters, hydrological seasons, and seepage-related microbial input
+  set.seed(999)
+  spe.rda <- dbrda(otu ~. , data = env_data, na.action=na.omit, distance="bray")
+  dbrda_test[which(well_var==i),7] <- anova.cca(spe.rda)$`Pr(>F)`[1]
+  dbrda_test[which(well_var==i),8] <- RsquareAdj(spe.rda)[["adj.r.squared"]]
+  
+assign("dbrda_test", dbrda_test)
+}
+write.csv(dbrda_test, "dbrda.csv")
