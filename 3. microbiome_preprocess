@@ -1,5 +1,5 @@
-setwd("/home/ke36dar/He/one_manu/phyloseq")
-st.all <- readRDS("/home/ke36dar/He/one_manu/seqtab.rds")
+setwd("<path>/phyloseq")
+st.all <- readRDS("<path>/seqtab.rds")
 
 library(dada2)
 packageVersion("dada2")
@@ -25,7 +25,7 @@ asv_fasta <- c(rbind(asv_headers, asv_seqs))
 write(asv_fasta, "ASVs_nocollapse.fasta")
 
 ##################################mothur check with bash script##############################
-cd /home/ke36dar/He/one_manu/phyloseq/mothur/
+cd <path>
 conda activate mothur
 mothur
 align.seqs(fasta=ASVs_nocollapse.fasta, reference=/home/na27six/silva.nr_v138_1.align, flip=t, processors=16)
@@ -63,7 +63,7 @@ table(nchar(getSequences(seqtab)))
 
 ###assigning taxonomy
 ptm <- proc.time()
-taxa <- assignTaxonomy(seqtab, "~/He/silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE)
+taxa <- assignTaxonomy(seqtab, "<path>/silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE)
 proc.time() - ptm 
 
 saveRDS(taxa, "all_tax_20240206.rds")
