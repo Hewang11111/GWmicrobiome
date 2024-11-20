@@ -1,0 +1,743 @@
+setwd(<path>)
+
+library(phyloseq) #1.42.0
+library(ggplot2)#3.4.3
+library(vegan)#2.6-4
+library(dplyr)#1.1.3
+library(reshape2)#1.4.4
+library(NbClust)#3.0.1
+library(ape)#5.7-1
+library(plotrix)#3.8-2
+library(Hmisc)#5.1-0
+library(microViz)#0.10.10
+library(ade4)
+library(lubridate)
+library(ggpubr)
+
+load("<path>/all_data_using.phyloseq")
+
+set_colors_well <- c("H14"= "green1" , # Well H14
+                     "H32"= "cyan4", # well H32
+                     "H41"= "#008DD2","H43"= "lightgoldenrod4",# well H41 and 43
+                     "H51"= "#FBC58C", "H52"= "mediumpurple3", "H53"= "plum","seepage"="grey") 
+
+
+set_shapes_season <-c(21, 22, 23, 24)
+
+
+#set_colors_recharge <- c("Recharge"="orange", "Recession"="grey")
+well_var <- c("H14", "H32", "H41", "H43", "H51", "H52", "H53")
+#set_shapes_recharge <- c("Recharge"=15, "Recession"=1)
+
+for (i in well_var){
+  physeq <- subset_samples(data, sample_data(data)$well == i)
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  assign(paste0("physeq_", i), physeq)
+}
+
+#####################################################Supplementary Fig. 5 and permutation tests#################################################################
+NMDS <- ordinate(data, "NMDS", "bray")
+NMDS$stress
+sample_data(data)$well[sample_data(data)$sample == "seepage"] <- "seepage"
+plot_ordination(data, NMDS, color="well")+geom_point(size=3)+
+  scale_color_manual(values=set_colors_well)+theme_classic()
+ggsave("NMDS_all_well.jpg", width=8, height=6)
+
+d1 <- phyloseq::distance(data, "bray")
+set.seed(999)
+adonis2(d1~sample, data=meta)
+
+#####################################################Supplementary Fig. 1B ######################################################################################
+library(ggfortify)
+library(factoextra)
+
+meta <- data.frame(sample_data(data))
+
+###select 15 hydrochemical parameters
+ds <- meta[,c(...)]
+
+ds2 <- ds[complete.cases(ds),] 
+pca_major <- prcomp(ds2[,-c(1)], scale.=TRUE)
+
+fviz_eig(pca_major, addlabels = TRUE)
+fviz_pca_var(pca_major, col.var="black")
+fviz_cos2(pca_major, choice = "var", axes = 1)
+fviz_cos2(pca_major, choice = "var", axes = 2)
+fviz_cos2(pca_major, choice = "var", axes = 1:2) 
+
+autoplot(pca_major, data=ds2,  color="well", size=3,loadings=TRUE, loadings.colour = 'blue',
+         loadings.label = FALSE, loadings.label.size = 3)+
+  stat_ellipse(aes(color=well),level=0.95)+
+  scale_color_manual(values= set_colors_well)+
+  theme_bw()+ 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+ggsave("PCA_major_nolabel.jpg", width=8, height=6)
+
+#####################################################Supplementary Fig. 2 ########################################################################################
+major <- subset_samples(data, sample_data(data)$well %in% well_var)
+major <- prune_taxa(taxa_sums(major)>0, major)
+
+bray_table <- as.data.frame(matrix(c(NA), nrow= 18, ncol=14))
+rownames(bray_table) <- c("wl","WT", "pH","EC25","redox", "DO", "Alkalinity", "Acidity","TIC", "Natrium","Potassium", "Calcium",  "Magnesium","Chloride","Sulfur", "season2", "seepage", "doc2")
+colnames(bray_table) <- c("H14_P", "H14_R", "H32_P", "H32_R", "H41_P", "H41_R", "H43_P", "H43_R", "H51_P", "H51_R", "H52_P", "H52_R",
+                          "H53_P", "H53_R")
+j <- 1
+for (i in well_var){
+  physeq <- get(paste0("physeq_", i))
+  physeq <- transform_sample_counts(physeq, function(x)x/sum(x))
+  
+  meta1 <- data.frame(sample_data(physeq))
+  meta1$year <- as.factor(meta1$year)
+  meta1$month <- as.factor(meta1$month)
+  
+  otu <- t(data.frame(otu_table(physeq)))
+  
+  for (variable in rownames(bray_table)){
+    form <- as.formula(paste0("otu~", variable))
+    set.seed(999)
+    spe.rda <- dbrda(form, data = meta1, na.action=na.omit, distance="bray")
+    bray_table[variable,][j] <- anova.cca(spe.rda)$`Pr(>F)`[1]
+    bray_table[variable,][j+1] <- RsquareAdj(spe.rda)[["adj.r.squared"]]
+    assign("bray_table", bray_table)
+  }
+  j <- j+2
+}
+
+bray_table1 <- bray_table
+
+bray_table1$H14_R[bray_table1$H14_P >0.05] <- NA
+bray_table1$H32_R[bray_table1$H32_P >0.05] <- NA
+bray_table1$H41_R[bray_table1$H41_P >0.05] <- NA
+bray_table1$H43_R[bray_table1$H43_P >0.05] <- NA
+bray_table1$H51_R[bray_table1$H51_P >0.05] <- NA
+bray_table1$H52_R[bray_table1$H52_P >0.05] <- NA
+bray_table1$H53_R[bray_table1$H53_P >0.05] <- NA
+
+bray_table1 <- bray_table1[,-c(1,3,5, 7, 9, 11, 13)]
+
+bray_table2 <- bray_table1
+
+###shannon index of metabolome (from the result of metabolome processing)
+bray_table2[19,] <- as.numeric(c(0.0206766189905628,0.12105102858753,0.0559409406348413, 0.107376517218127,0.0951871869119613, 0.339133016171204, 0.320357505954069))
+rownames(bray_table2)[19] <- "Shannon_metabolome"
+
+###PcoA first axis of metabolome (from the result of metabolome processing)
+bray_table2[20,] <- as.numeric(c(0.144454801866498,0.205529777506053,0.113216262817465, 0.136571094770733, 0.133366470480746, 0.367557940101224, 0.381978006895826))
+rownames(bray_table2)[20] <- "PcoA1_metabolome"
+
+###shannon index and PcoA first axis of metabolome (from the result of metabolome processing)
+bray_table2[21,] <- as.numeric(c(0.159530152435024,0.205443148294673,0.109686745705798, 0.137238243136125,0.136885313107981, 0.38689138895232, 0.39006390161813))
+rownames(bray_table2)[21] <- "PcoA1_Shannon_metabolome"
+
+bray_table2$variable1 <- rownames(bray_table2)
+bray_table2_melt <- melt(bray_table2)
+bray_table2_melt <- bray_table2_melt[bray_table2_melt$variable1 %in% c("wl","WT", "pH","EC25","redox", "DO", "Alkalinity", "Acidity","TIC", "Natrium","Potassium", "Calcium",  "Magnesium","Chloride","Sulfur", "season2","seepage", "doc2","Shannon_metabolome","PcoA1_metabolome", "PcoA1_Shannon_metabolome"),]
+bray_table2_melt$variable1 <- factor(bray_table2_melt$variable1, levels=c("wl","WT", "pH","EC25","redox", "DO", "Alkalinity", "Acidity","TIC", "Natrium","Potassium", "Calcium",  "Magnesium","Chloride","Sulfur", "season2", "seepage","doc2","Shannon_metabolome","PcoA1_metabolome", "PcoA1_Shannon_metabolome") )
+
+bray_table2_melt$variable <- factor(bray_table2_melt$variable, levels=c("H14_R", "H43_R", "H41_R", "H51_R", "H32_R", "H53_R", "H52_R"))
+
+ggplot(bray_table2_melt, aes(variable,variable1, fill=value))+
+  geom_tile(color="white", lwd=1, linetype=1)+
+  scale_fill_continuous(limits=c(0,0.4), breaks=seq(0, 0.4, by =0.2), na.value="white", low = "green", high = "red")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  coord_fixed()
+
+ggsave("cca_individual_environment.jpg", width=7, height=10)
+
+#####################################################dbrda tests for 15 hydrochemical parameters/plus seepage-related microbial input and hydrological seasons##############
+dbrda_table <- as.data.frame(matrix(c(NA), nrow= 2, ncol=14))
+rownames(dbrda_table) <- c("env15","env17")
+colnames(dbrda_table) <- c("H14_P", "H14_R", "H32_P", "H32_R", "H41_P", "H41_R", "H43_P", "H43_R", "H51_P", "H51_R", "H52_P", "H52_R",
+                          "H53_P", "H53_R")
+
+####15 env##
+for (i in well_var){
+  physeq <- get(paste0("physeq_", i))
+  meta1 <- data.frame(sample_data(physeq))[,c(...)]
+  physeq <- transform_sample_counts(physeq, function(x)x/sum(x))
+  otu <- t(data.frame(otu_table(physeq)))
+  
+  env.z <- decostand(meta1[,c(1:15)], method="standardize")
+  set.seed(999)
+  spe.rda <- dbrda(otu ~., data = env.z, na.action=na.omit, distance="bray")
+  dbrda_table[1,which(well_var==i)*2-1] <- anova.cca(spe.rda)$`Pr(>F)`[1]
+  dbrda_table[1,which(well_var==i)*2] <- RsquareAdj(spe.rda)[["adj.r.squared"]]
+  
+  assign("dbrda_table",dbrda_table)
+}
+
+####17 env##
+for (i in well_var){
+  physeq <- get(paste0("physeq_", i))
+  meta1 <- data.frame(sample_data(physeq))[,c(...)]
+  physeq <- transform_sample_counts(physeq, function(x)x/sum(x))
+  otu <- t(data.frame(otu_table(physeq)))
+  meta1$season2 <- as.factor(meta1$season2)
+  
+  numeric_vars <- meta1[, -which(names(meta1) == "season2")]
+  env.z <- decostand(numeric_vars, method = "standardize")
+  
+  env_data <- cbind(env.z, season2 = meta1$season2)  
+  set.seed(999)
+  spe.rda <- dbrda(otu ~., data = env_data, na.action=na.omit, distance="bray")
+  dbrda_table[2,which(well_var==i)*2-1] <- anova.cca(spe.rda)$`Pr(>F)`[1]
+  dbrda_table[2,which(well_var==i)*2] <- RsquareAdj(spe.rda)[["adj.r.squared"]]
+  
+  assign("dbrda_table",dbrda_table)
+}
+
+#####################################################Fig. 1B######################################################################################################
+set_colors <- c(  "Others"="gray",
+                  "Acidobacteriae"="orange2","Holophagae"="orange3", "Subgroup 22"="orange1","Vicinamibacteria"= "orange4",
+                  "Acidimicrobiia"= "darkred","Actinobacteria"="brown","Thermoleophilia"= "brown3",
+                  "Bacteroidia"="darkorange3","Ignavibacteria"="darkorange","Kryptonia"="orange3",
+                  "Bdellovibrionia"= "red1","Oligoflexia" = "red3",
+                  "Campylobacteria"="cyan" ,#S1
+                  "Dehalococcoidia"="lightpink","JG30-KF-CM66"="palevioletred1","KD4-96"="hotpink",
+                  "Syntrophia"="yellow",
+                  "Elusimicrobia" = "burlywood","Lineage IIc"="burlywood1",
+                  "BD2-11 terrestrial group"="grey20","Gemmatimonadetes" = "black",
+                  "Methylomirabilia" = "aquamarine1",
+                  "Polyangia" = "purple1",
+                  "bacteriap25"="purple",
+                  "HDB-SIOI1093"="deepskyblue","Nitrospiria"="blue","Thermodesulfovibrionia"="royalblue","4-29-1"= "skyblue",
+                  "ABY1"="lightgreen", "Berkelbacteria"="#5CA595","Gracilibacteria"="darkolivegreen4","Parcubacteria"="green2",   "Saccharimonadia" = "green4",
+                  "Brocadiae"="firebrick2","Phycisphaerae"="orangered3",
+                  "Alphaproteobacteria" = "purple4", "Gammaproteobacteria"="mediumpurple2",
+                  "Omnitrophia"="darkorange3","Verrucomicrobiae"="darkorange1")
+
+
+###Abundance >1%
+for (i in well_var){
+  well1 <- subset_samples(data, sample_data(data)$well==i)
+  my_data_prop <- transform_sample_counts(well1, function(x)100*x/sum(x))
+  RANK="Class"
+  my_data_prop_rank <- tax_glom(my_data_prop, taxrank=RANK)
+  my_data_prop_abun <- filter_taxa(my_data_prop_rank, function(x) mean(x) > 1, TRUE)
+  others <- tax_glom(my_data_prop_abun, "Kingdom" )
+  otu_table(others) <- 100 - otu_table(others)
+  tax_table(others)@.Data[,2:6] <- "Others"
+  taxa_names(others) <- "Others"
+  OTU1 <- otu_table(t(rbind(otu_table(others), otu_table(my_data_prop_abun) )), taxa_are_rows = FALSE)
+  TAX1 <- tax_table(rbind(tax_table(others), tax_table(my_data_prop_abun) )) 
+  METADATA1 <- sample_data(my_data_prop_abun)
+  
+  final <- phyloseq(OTU1, TAX1, METADATA1)
+  my_data_rank_melt <- psmelt (final)
+  my_data_rank_melt <- transform(my_data_rank_melt, Phylum=reorder(Class, order(Abundance, decreasing=TRUE)))
+  well_class <- aggregate(Abundance ~ well+Class, my_data_rank_melt, function(x) c(mean = mean(x), sd = sd(x)))
+  
+  write.csv(well_class, paste0("1_per_cent/Class_",i,".csv"))
+  
+  my_data_rank_melt_select <- my_data_rank_melt
+  my_data_rank_melt_select$Class<- factor(my_data_rank_melt_select$Class, levels = 
+                                            c("Others", 
+                                              "Vicinamibacteria",
+                                              "Actinobacteria", "Thermoleophilia",
+                                              "Bacteroidia", "Kryptonia",
+                                              "Bdellovibrionia", "Oligoflexia",
+                                              "Dehalococcoidia","KD4-96",
+                                              "Elusimicrobia",
+                                              "Gemmatimonadetes",
+                                              "Methylomirabilia",
+                                              "Polyangia",
+                                              "4-29-1","Nitrospiria", "Thermodesulfovibrionia",
+                                              "ABY1","Berkelbacteria","Gracilibacteria","Parcubacteria", "Saccharimonadia" ,
+                                              "Brocadiae","Phycisphaerae",
+                                              "Alphaproteobacteria" , "Gammaproteobacteria", 
+                                              "Omnitrophia"))
+  
+  
+  
+  ggplot(my_data_rank_melt_select,
+         aes(x = date,  y=Abundance,
+             fill = Class, label = Class)) +
+    scale_fill_manual(values=set_colors) +
+    geom_area(alpha=0.6, linewidth=0.5, color="white") +
+    # facet_wrap(Well~Year)+
+    theme_bw()+
+    # geom_text(stat = "stratum", size = 3) +
+    theme(legend.position = "bottom") +
+    ylab("Relative abundance (%)") +
+    xlab("Date") +
+    scale_x_date (date_labels = "%b %Y", limits = as.Date(c("2013-2-1", "2023-6-1")),
+                  breaks=as.Date(c("2013-5-1", "2014-5-1", "2015-5-1", "2016-5-1", "2017-5-1", "2018-5-1", "2019-5-1", "2020-5-1",
+                                   "2021-5-1", "2022-5-1")))+
+   
+    guides(fill=guide_legend(nrow=5))+
+    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=12),legend.title=element_text(size=14)) +
+    theme(axis.text.x = element_text(angle = 270, vjust = 0.5, hjust = 0.5))+
+    ggtitle("Bacterial community changes over time")
+  
+  ggsave(paste0("1_per_cent/Class_",i,".jpg"), width = 9.45, height = 7)
+  
+}
+
+#####################################################Fig. 1A######################################################################################################
+smooth <- function(y ){
+  h <- c(head(y, 1), mean(head(y, 3)))
+  t <- c(mean(tail(y, 3)), tail(y, 1))
+  m <- stats::convolve(y, rep(1/5, 5), type = "filter")
+  c(h, m, t)
+}
+
+turnover <- as.data.frame(matrix(c(NA), nrow=7, ncol=5))
+rownames(turnover) <- well_var
+colnames(turnover) <- c("P", "R2", "slope", "mantel_P", "mantel_R")
+
+
+for (i in well_var){
+  physeq <- get(paste0("physeq_",i))
+  physeq <- transform_sample_counts(physeq, function(x)x/sum(x))
+  phy_dis <- phyloseq::distance(physeq, "bray")
+  
+  phy_sim <- 1- phy_dis
+  
+  Day <- data.frame(cbind(rownames(sample_data(physeq)), sample_data(physeq)$date-(min(sample_data(physeq)$date)-1)))
+  rownames(Day) <- Day$X1
+  Day$X1 <- NULL
+  
+  dfH <- data.frame(cbind(phy_sim, dist(Day)))
+  dfH$well <- i
+  names(dfH) <- c("similarity", "Day", "well")
+  
+  for (j in nrow(dfH)){
+    dfH$month <- ((dfH$Day+15)%/%30)
+  }
+  
+  assign(paste0("dfH_", i), dfH)
+  
+  ag2 <- aggregate(similarity~month, data=dfH, FUN = function(x) c(mean=mean(x, na.rm=TRUE), se=std.error(x, na.rm=TRUE)))
+  ag2$mean <- ag2$similarity[,1]
+  ag2$se <- ag2$similarity[,2]
+  ag2 <-ag2[,-2]
+  ag2$smooth <- smooth(ag2$mean)
+  ag2$day <- ag2$month*30
+  
+  ggplot()+
+    geom_point(data=dfH,aes(x=Day, y=similarity), color="#A2D9F7")+
+    geom_smooth(data=dfH,aes(x=Day, y=similarity),method="lm", se=FALSE, color="black", linetype = "dashed")+
+    
+    geom_point(data=ag2, aes(x=day, y=mean), color="red", size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean-se, ymax=mean+se), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    geom_line(data=ag2, aes(x=day, y=smooth), color="blue", size=1, alpha=0.35)+
+    theme_classic()+
+    ylim(0,1)+
+    ylab("community similarity") + 
+    xlab("Day difference")+
+    theme(strip.text.x = element_text(size = 16))+
+    theme(strip.background =element_rect(fill="#A2D9F7"))+
+    theme(legend.position="none")+
+    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=14))+
+    scale_x_continuous(breaks=seq(0, 3650, 365))+
+    geom_vline(xintercept = seq(0, 3650, 365), linetype="dashed", 
+               color = "grey", size=0.5)
+  ggsave(paste0(i,"turnover_similarity.jpg"), width=7, height=5)
+  
+  
+  model <- lm(dfH$similarity~dfH$Day)
+  sum <- summary(model)
+  
+  turnover[which(well_var==i),1] <- sum$coefficients[8]
+  turnover[which(well_var==i),2] <- round(sum$adj.r.squared,2)
+  turnover[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  mantel <- mantel.rtest(phy_dis, dist(Day))
+  turnover[which(well_var==i), 4] <- mantel$pvalue
+  turnover[which(well_var==i), 5] <- mantel$obs
+  
+  assign("turnover", turnover)
+  
+}
+turnover$slope_year <- as.numeric(turnover$slope)*365
+
+#####################################################Fig. 3A#################################################################
+dfH_all <- rbind(dfH_H14, dfH_H32, dfH_H41, dfH_H43, dfH_H51, dfH_H52, dfH_H53)
+dfH_all$well <- factor(dfH_all$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+ggplot(dfH_all, aes(well, similarity, color=well))+
+  geom_boxplot()+
+  ylim(0,1)+
+  scale_color_manual(values=set_colors_well)+
+  stat_summary(fun = mean, geom = "crossbar", width = 0.75, size = 0.5, color = "red")+
+  theme_classic()
+ggsave("temporal_stability.jpg", width=7, height=5)
+
+data.frame(dfH_all) %>%
+  group_by(well)%>%
+  summarise(me=mean(similarity),
+            se=sd(similarity))
+
+dfH_all$class <- "high"
+dfH_all$class[dfH_all$well %in% c("H52", "H53")] <- "low"
+
+wilcox.test(similarity~class, data=dfH_all) #p-value < 2.2e-16
+
+#####################################################Fig. 2A (similar to Supplementary Fig. 4)#################################################################
+fH_all_month <- arrange(dfH_all, dfH_all$Day)
+dfH_all_month <- dfH_all_month[dfH_all_month$Day<45 & dfH_all_month$Day>14,]
+dfH_all_month$dis <- 1-dfH_all_month$similarity
+
+data.frame(dfH_all_month) %>%
+  group_by(well)%>%
+  summarise(me=mean(dis),
+            se=sd(dis))
+
+
+ggplot(dfH_all_month, aes(well, dis, color=well))+
+  geom_boxplot()+
+  ylim(0,1)+
+  scale_color_manual(values=set_colors_well)+
+  stat_summary(fun = mean, geom = "crossbar", width = 0.75, size = 0.5, color = "red")+
+  theme_classic()
+ggsave("short_term_variability.jpg", width=7, height=5)
+
+#####################################################Fig. 2C#################################################################
+meta_major$well <- factor(meta_major$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+
+ggplot(meta_major, aes(well, Shannon, color=well))+
+  geom_boxplot()+
+  scale_color_manual(values=set_colors_well)+
+  stat_summary(fun = mean, geom = "crossbar", width = 0.75, size = 0.5, color = "red")+
+  theme_classic()
+ggsave("Shannon_all_mean.jpg", width=7, height=5)
+
+wilcox.test(Shannon~class, data=meta_major) #p-value < 2.2e-16
+
+#####################################################Fig. 2D#################################################################
+for (i in well_var){
+  physeq <- get(paste0("physeq_", i))
+  
+  core<- filter_taxa(physeq, function(x) sum(x > 0) >= (0.8*length(x)), TRUE)
+  
+  prop <- transform_sample_counts(physeq, function(x)100*x/sum(x))
+  prop_core <- subset_taxa(prop, rownames(tax_table(prop)) %in% taxa_names(core))
+  
+  prop_core_class <- tax_glom(prop_core, taxrank="Class")
+  
+  others <- tax_glom(prop_core, taxrank="Kingdom")
+  otu_table(others) <- otu_table(others)-sample_sums(prop_core_class) 
+  tax_table(others)@.Data[,2:6] <- "Others"
+  taxa_names(others) <- "Others"
+  
+  
+  OTU1 <- otu_table(rbind(otu_table(others), otu_table(prop_core_class)), taxa_are_rows = TRUE)
+  TAX1 <- tax_table(rbind(tax_table(others), tax_table(prop_core_class) )) 
+  METADATA1 <- sample_data(prop_core_class)
+  
+  final <- phyloseq(OTU1, TAX1, METADATA1)
+  
+  
+  data_rank_melt <- psmelt(final)
+  assign(paste0("core_melt_", i), data_rank_melt)
+  
+}
+
+
+for (i in well_var){
+  core_melt <- get(paste0("core_melt_", i))
+  core_melt_select <- aggregate(Abundance ~ Class+Phylum, core_melt, function(x) c(mean = mean(x), sd = sd(x)))
+  core_melt_select$well <- i
+  assign(paste0("core_melt_", i), core_melt_select)
+  
+}
+
+
+core_melt_full <- rbind(core_melt_H14, core_melt_H32, core_melt_H41, core_melt_H43, core_melt_H51, core_melt_H52, core_melt_H53)
+
+
+for (j in c(1:nrow(core_melt_full))){
+  
+  if (core_melt_full$Class[j] %in%   c("Others", 
+                                       "Vicinamibacteria",
+                                       "Actinobacteria", "Thermoleophilia",
+                                       "Bacteroidia", "Kryptonia",
+                                       "Bdellovibrionia", "Oligoflexia",
+                                       "Dehalococcoidia","KD4-96",
+                                       "Elusimicrobia",
+                                       "Gemmatimonadetes",
+                                       "Methylomirabilia",
+                                       "Polyangia",
+                                       "4-29-1","Nitrospiria", "Thermodesulfovibrionia",
+                                       "ABY1","Berkelbacteria","Gracilibacteria","Parcubacteria", "Saccharimonadia" ,
+                                       "Brocadiae","Phycisphaerae",
+                                       "Alphaproteobacteria" , "Gammaproteobacteria", 
+                                       "Omnitrophia")){
+    
+  }else{
+    
+    core_melt_full$Class[j] <- "Others"           }}
+
+
+core_melt_full$Class <- factor(core_melt_full$Class, levels = c("Others", 
+                                                                "Vicinamibacteria",
+                                                                "Actinobacteria", "Thermoleophilia",
+                                                                "Bacteroidia", "Kryptonia",
+                                                                "Bdellovibrionia", "Oligoflexia",
+                                                                "Dehalococcoidia","KD4-96",
+                                                                "Elusimicrobia",
+                                                                "Gemmatimonadetes",
+                                                                "Methylomirabilia",
+                                                                "Polyangia",
+                                                                "4-29-1","Nitrospiria", "Thermodesulfovibrionia",
+                                                                "ABY1","Berkelbacteria","Gracilibacteria","Parcubacteria", "Saccharimonadia" ,
+                                                                "Brocadiae","Phycisphaerae",
+                                                                "Alphaproteobacteria" , "Gammaproteobacteria", 
+                                                                "Omnitrophia"))
+
+core_melt_full$well <- factor(core_melt_full$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+
+ggplot(data = core_melt_full,aes(x = well, y = Abundance[,1], fill = Class)) + geom_col(alpha=0.6)+
+  scale_fill_manual(values=set_colors) +
+  theme_bw() +
+  theme(legend.position = "right") +
+  ylab("Abundance") +
+  xlab("Well") +
+  theme(axis.text.x = element_text(angle = 0, vjust = 0.5)) +
+  theme(axis.title=element_text(size=14), 
+        axis.text=element_text(size=14), legend.text=element_text(size=14)) +
+  theme(text=element_text(size=14))
+
+ggsave("all_core_column_fig.jpg", width = 10, height = 6)
+
+#####################################################Fig. 4B#################################################################################################
+ggplot(meta_major, aes(well, seepage, color=well))+
+  geom_boxplot()+
+  scale_color_manual(values=set_colors_well)+
+  stat_summary(fun = mean, geom = "crossbar", width = 0.75, size = 0.5, color = "red")+
+  theme_classic()
+ggsave("seepage_boxplot.jpg", width=7, height=5)
+
+shapiro.test(meta_major$seepage)
+wilcox.test(seepage~class, data=meta_major)
+
+library(dplyr)
+meta_major %>%
+  group_by(well) %>%
+  summarise(me =mean(seepage))
+
+meta[meta$well %in% well_var,] %>%
+  group_by(recharge, well)%>%
+  summarise(me =mean(seepage))
+wilcox.test(seepage~recharge, data=meta_major[meta_major$well == H14,])
+..
+
+#####################################################Supplementary Fig. 7############################################################################################
+for (i in well_var){
+  physeq <- subset_samples(data, sample_data(data)$well ==i)
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  physeq <- transform_sample_counts(physeq, function(x)100*x/sum(x))
+
+###take out 15 hydrochemical factors
+  meta1 <- data.frame(sample_data(physeq))[,c(...)]
+  otu <- t(data.frame(otu_table(physeq)))
+  
+   mantel <- mantel_test(otu, meta1[3:18],
+                         na.rm=TRUE, seed=100, spec_dist = "bray", env_dist="bray") %>% 
+    mutate(rd = cut(r, breaks = c(-Inf, 0.2, 0.4, Inf),
+                    labels = c("< 0.2", "0.2 - 0.4", ">= 0.4")),
+           pd = cut(p, breaks = c(-Inf, 0.01, 0.05, Inf),
+                    labels = c("< 0.01", "0.01 - 0.05", ">= 0.05"))) %>%
+    filter(p <=0.05)
+  
+  qcorrplot(correlate(meta1[3:18]), type = "lower", diag = FALSE) +
+    geom_square() +
+    geom_couple(aes(colour = pd, size = rd), 
+                data = mantel, 
+                curvature = nice_curvature()) +
+    scale_fill_gradientn(colours = RColorBrewer::brewer.pal(11, "RdBu")) +
+    scale_size_manual(values = c(0.5, 1, 2)) +
+    scale_colour_manual(values = color_pal(3)) +
+    guides(size = guide_legend(title = "Mantel's r",
+                               override.aes = list(colour = "grey35"), 
+                               order = 2),
+           colour = guide_legend(title = "Mantel's p", 
+                                 override.aes = list(size = 3), 
+                                 order = 1),
+           fill = guide_colorbar(title = "Pearson's r", order = 3))
+  
+  ggsave(paste0(i, "_correlation.jpg"), width=7, height=5)
+}
+
+#####################################################Supplementary Fig. 3 and characteristics of phylogenetic structure of GW microbiome##########################################
+load("/data/ke36dar/one_manu/tree/all_root.phyloseq")
+library(ape)
+is.rooted(phy_tree(data_root))
+
+for (i in well_var){
+  physeq <- subset_samples(data_root, sample_data(data_root)$well==i )
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  physeq <- transform_sample_counts(physeq, function(x)x/sum(x))
+  phy_dis <- phyloseq::distance(physeq, "unifrac")
+  
+  meta1 <- data.frame(sample_data(physeq))
+  
+  set.seed(999)
+  spe.rda <- dbrda(phy_dis~season2, data = meta1, na.action=na.omit)
+  print(i)
+  print(anova.cca(spe.rda)$`Pr(>F)`[1])
+  print(RsquareAdj(spe.rda)[["adj.r.squared"]])
+}
+
+turnover_phyloge <- as.data.frame(matrix(c(NA), nrow=7, ncol=5))
+rownames(turnover_phyloge) <- well_var
+colnames(turnover_phyloge) <- c("P", "R2", "slope", "mantel_P", "mantel_R")
+
+for (i in well_var){
+  physeq <- subset_samples(data_root, sample_data(data_root)$well==i )
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  physeq <- transform_sample_counts(physeq, function(x)x/sum(x))
+  phy_dis <- phyloseq::distance(physeq, "unifrac")
+  
+  phy_sim <- 1- phy_dis
+  
+  Day <- data.frame(cbind(rownames(sample_data(physeq)), sample_data(physeq)$date-(min(sample_data(physeq)$date)-1)))
+  rownames(Day) <- Day$X1
+  Day$X1 <- NULL
+  
+  dfH <- data.frame(cbind(phy_sim, dist(Day)))
+  dfH$well <- i
+  names(dfH) <- c("similarity", "Day", "well")
+  
+  for (j in nrow(dfH)){
+    dfH$month <- ((dfH$Day+15)%/%30)
+  }
+  
+  ag2 <- aggregate(similarity~month, data=dfH, FUN = function(x) c(mean=mean(x, na.rm=TRUE), se=std.error(x, na.rm=TRUE)))
+  ag2$mean <- ag2$similarity[,1]
+  ag2$se <- ag2$similarity[,2]
+  ag2 <-ag2[,-2]
+  ag2$smooth <- smooth(ag2$mean)
+  ag2$day <- ag2$month*30
+  write.csv(ag2, paste0(i, "_phylogenetic_table.csv"))
+  
+  ggplot()+
+    geom_point(data=dfH,aes(x=Day, y=similarity), color="#A2D9F7")+
+    geom_smooth(data=dfH,aes(x=Day, y=similarity),method="lm", se=FALSE, color="black", linetype = "dashed")+
+    
+    geom_point(data=ag2, aes(x=day, y=mean), color="red", size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean-se, ymax=mean+se), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    geom_line(data=ag2, aes(x=day, y=smooth), color="blue", size=1, alpha=0.35)+
+    theme_classic()+
+    ylim(0,0.75)+
+    ylab("community similarity") + 
+    xlab("Day difference")+
+    theme(strip.text.x = element_text(size = 16))+
+    theme(strip.background =element_rect(fill="#A2D9F7"))+
+    theme(legend.position="none")+
+    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=14))+
+    scale_x_continuous(breaks=seq(0, 3650, 365))+
+    geom_vline(xintercept = seq(0,3650, 365), linetype="dashed", 
+               color = "grey", size=0.5)
+  ggsave(paste0(i,"turnover_phylo_similarity_0.75.jpg"), width=7, height=5)
+  
+  
+  model <- lm(dfH$similarity~dfH$Day)
+  sum <- summary(model)
+  
+  turnover_phyloge[which(well_var==i),1] <- sum$coefficients[8]
+  turnover_phyloge[which(well_var==i),2] <- round(sum$adj.r.squared,2)
+  turnover_phyloge[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  mantel <- mantel.rtest(phy_dis, dist(Day))
+  turnover_phyloge[which(well_var==i), 4] <- mantel$pvalue
+  turnover_phyloge[which(well_var==i), 5] <- mantel$obs
+  
+  assign("turnover_phyloge", turnover_phyloge)
+  
+}
+
+#####################################################Supplementary Fig. 1B ###########################################################
+turnover_env <- as.data.frame(matrix(c(NA), nrow=7, ncol=7))
+rownames(turnover_env) <- well_var
+colnames(turnover_env) <- c("P", "R2", "slope", "mantel_P", "mantel_R", "mantel_bac_P", "mantel_bac_R")
+
+for (i in well_var){
+  physeq <- subset_samples(data, sample_data(data)$well==i )
+  meta_well <- data.frame(sample_data(physeq))[,c(10,13,15:20, 23:27,29, 31)]
+  meta_well <- na.omit(meta_well)
+  
+  physeq <- subset_samples(physeq, sample_names(physeq)%in%rownames(meta_well))
+  
+  meta_de <- decostand(meta_well, method = "standardize")
+  meta_dis <- vegdist(meta_de, method="euclidean")
+  meta_dis1 <- (meta_dis-min(meta_dis))/(max(meta_dis)-min(meta_dis))
+  meta_sim <- 1-meta_dis1
+  
+  Day <- data.frame(cbind(rownames(sample_data(physeq)), sample_data(physeq)$date-(min(sample_data(physeq)$date)-1)))
+  rownames(Day) <- Day$X1
+  Day$X1 <- NULL
+  
+  dfH <- data.frame(cbind(meta_sim, dist(Day)))
+  dfH$well <- i
+  names(dfH) <- c("similarity", "Day", "well")
+  assign(paste0(i,"dfH_env"), dfH)
+  
+  dfH$month <- ((dfH$Day+15)%/%30)
+  
+  ag2 <- aggregate(similarity~month, data=dfH, FUN = function(x) c(mean=mean(x, na.rm=TRUE), se=std.error(x, na.rm=TRUE)))
+  ag2$mean <- ag2$similarity[,1]
+  ag2$se <- ag2$similarity[,2]
+  ag2 <-ag2[,-2]
+  ag2$smooth <- smooth(ag2$mean)
+  ag2$day <- ag2$month*30
+
+  ggplot()+
+    geom_point(data=dfH,aes(x=Day, y=similarity), color="#A2D9F7")+
+    geom_smooth(data=dfH,aes(x=Day, y=similarity),method="lm", se=FALSE, color="black", linetype = "dashed")+
+    
+    geom_point(data=ag2, aes(x=day, y=mean), color="red", size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean-se, ymax=mean+se), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    geom_line(data=ag2, aes(x=day, y=smooth), color="blue", size=1, alpha=0.35)+
+    theme_classic()+
+    ylab("community similarity") + 
+    xlab("Day difference")+
+    theme(strip.text.x = element_text(size = 16))+
+    theme(strip.background =element_rect(fill="#A2D9F7"))+
+    theme(legend.position="none")+
+    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=14))+
+    scale_x_continuous(breaks=seq(0, 3650, 365))+
+    geom_vline(xintercept = seq(0, 3650, 365), linetype="dashed", 
+               color = "grey", size=0.5)
+  ggsave(paste0(i,"_euclidean_meta_15.jpg"), width=7, height=5)
+  
+  model <- lm(dfH$similarity~dfH$Day)
+  sum <- summary(model)
+  
+  turnover_env[which(well_var==i),1] <- sum$coefficients[8]
+  turnover_env[which(well_var==i),2] <- round(sum$adj.r.squared,2)
+  turnover_env[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  set.seed(100)
+  mantel <- mantel.rtest(meta_dis1, dist(Day))
+  turnover_env[which(well_var==i), 4] <- mantel$pvalue
+  turnover_env[which(well_var==i), 5] <- mantel$obs
+  
+  phy_dis <- phyloseq::distance(physeq, "bray")
+  
+  set.seed(100)
+  mantel <- mantel.rtest(meta_dis1, phy_dis)
+  turnover_env[which(well_var==i), 6] <- mantel$pvalue
+  turnover_env[which(well_var==i), 7] <- mantel$obs  
+}
+
+turnover_env$year <- as.numeric(turnover_env$slope)*365
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
