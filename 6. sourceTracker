@@ -1,0 +1,217 @@
+setwd(<path>)
+
+load("<path>/all_data.phyloseq")
+
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+
+packageVersion("phyloseq") #1.34.0
+################seepage
+# load sample metadata
+
+metadata <- read.csv("<path>/metadata.csv")
+
+identical(sample_names(data), metadata$X.4)
+rownames(metadata) <- metadata$X.4
+metadata <- metadata[,-1]
+
+metadata$SourceSink <- "source"
+metadata$SourceSink[metadata$sample=="GW"] <- "sink"
+
+metadata <- metadata[,c(...)]
+colnames(metadata) <- c("Description", "Env", "SourceSink", "Well","Campaign" )
+
+nrow(metadata[metadata$SourceSink=="sink",])
+
+otus <- data.frame(otu_table(data))
+otus <- data.frame(t(otus))
+
+# extract only those samples in common between the two tables
+common.sample.ids <- intersect(rownames(metadata), rownames(otus))
+otus <- otus[common.sample.ids,]
+metadata <- metadata[common.sample.ids,]
+# double-check that the mapping file and otu table
+# had overlapping samples
+if(length(common.sample.ids) <= 1) {
+    message <- paste(sprintf('Error: there are %d sample ids in common '),
+                    'between the metadata file and data table')
+    stop(message)
+}
+
+factor(metadata$Env)
+which(metadata$Env != "GW" & metadata$Env != "seepage")
+
+# extract the source environments and source/sink indices
+train.ix <- which(metadata$SourceSink=='source')
+test.ix <- which(metadata$SourceSink=='sink')
+envs <- metadata$Env
+if(is.element('Description',colnames(metadata))) desc <- metadata$Description
+
+# load SourceTracker package
+source('<path>/sourcetracker/sourcetracker-1.0.1/src/SourceTracker.r')
+
+# tune the alpha values using cross-validation (this is slow!)
+# tune.results <- tune.st(otus[train.ix,], envs[train.ix])
+# alpha1 <- tune.results$best.alpha1
+# alpha2 <- tune.results$best.alpha2
+# note: to skip tuning, run this instead:
+alpha1 <- alpha2 <- 0.001
+
+# train SourceTracker object on training data
+
+set.seed(100)
+st <- sourcetracker(otus[train.ix,], envs[train.ix],rarefaction_depth=1000)
+
+
+# Estimate source proportions in test data
+set.seed(100)
+results <- predict(st,otus[test.ix,], alpha1=alpha1, alpha2=alpha2, full.results=TRUE)
+
+
+####further analysis
+setwd("/data/AquaData/ke36dar/one_manuscript/sourcetracker2")
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+library(Hmisc)
+library(reshape2)
+
+seepage <- results$full.results[,1,,]
+seepage <- apply(seepage, c(2,3), mean)
+
+colSums(seepage)
+
+rownames(seepage) <- taxa_names(data)
+colnames(seepage) <- rownames(metadata)[test.ix]
+seepage1 <- seepage[rowSums(seepage)>0,]
+
+seepage1 <- seepage1/1000
+colSums(seepage1[,c(1:3)])
+rowSums(seepage1[,c(1:3)])
+
+seepage1 <- data.frame(seepage1)
+seepage1$rowname <- rownames(seepage1)
+seepage_melt <- melt(seepage1)
+
+seepage_melt$variable <- as.character(seepage_melt$variable)
+
+seepage_melt$well <- meta$well[match(seepage_melt$variable, rownames(meta))]
+seepage_melt$date <- meta$date[match(seepage_melt$variable, rownames(meta))]
+head(taxtable)
+seepage_melt$Phylum <- taxtable$Phylum[match(seepage_melt$rowname, rownames(taxtable))]
+seepage_melt$Class <- taxtable$Class[match(seepage_melt$rowname, rownames(taxtable))]
+seepage_melt$Order <- taxtable$Order[match(seepage_melt$rowname, rownames(taxtable))]
+seepage_melt$Family <- taxtable$Family[match(seepage_melt$rowname, rownames(taxtable))]
+seepage_melt$Genus <- taxtable$Genus[match(seepage_melt$rowname, rownames(taxtable))]
+
+seepage_melt1 <- seepage_melt[seepage_melt$value>0,]
+
+for (i in (1:nrow(seepage_melt1))){
+  if (seepage_melt1$Class[i] %in% c("Others", 
+                                    "Vicinamibacteria",
+                                    "Actinobacteria", "Thermoleophilia",
+                                    "Bacteroidia", "Kryptonia",
+                                    "Bdellovibrionia", "Oligoflexia",
+                                    "Dehalococcoidia","KD4-96",
+                                    "Elusimicrobia",
+                                    "Gemmatimonadetes",
+                                    "Methylomirabilia",
+                                    "Polyangia",
+                                    "4-29-1","Nitrospiria", "Thermodesulfovibrionia",
+                                    "ABY1","Berkelbacteria","Gracilibacteria","Parcubacteria", "Saccharimonadia" ,
+                                    "Brocadiae","Phycisphaerae",
+                                    "Alphaproteobacteria" , "Gammaproteobacteria", 
+                                    "Omnitrophia")){
+    seepage_melt1$Class[i] <- seepage_melt1$Class[i]
+  } else {seepage_melt1$Class[i] <- "Others"}
+}
+
+seepage_melt1$Class[is.na(seepage_melt1$Class)] <- "Others"
+seepage_melt1$Class <- factor (seepage_melt1$Class, levels=c("Others", 
+                                                             "Vicinamibacteria",
+                                                             "Actinobacteria", "Thermoleophilia",
+                                                             "Bacteroidia", "Kryptonia",
+                                                             "Bdellovibrionia", "Oligoflexia",
+                                                             "Dehalococcoidia","KD4-96",
+                                                             "Elusimicrobia",
+                                                             "Gemmatimonadetes",
+                                                             "Methylomirabilia",
+                                                             "Polyangia",
+                                                             "4-29-1","Nitrospiria", "Thermodesulfovibrionia",
+                                                             "ABY1","Berkelbacteria","Gracilibacteria","Parcubacteria", "Saccharimonadia" ,
+                                                             "Brocadiae","Phycisphaerae",
+                                                             "Alphaproteobacteria" , "Gammaproteobacteria", 
+                                                             "Omnitrophia"))
+
+levels(seepage_melt1$Class)
+seepage_melt1$well <- factor(seepage_melt1$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+write.table(seepage_melt1, "seepage_asv.tsv", sep="\t", quote=F)
+
+
+#################################################Fig. 4A###########################################################
+getwd()
+seepage <- read.table("/data/AquaData/ke36dar/one_manuscript/sourcetracker2/seepage_asv.tsv", sep="\t", header=T)
+set_colors <- c(  "Others"="gray",
+                  "Acidobacteriae"="orange2","Holophagae"="orange3", "Subgroup 22"="orange1","Vicinamibacteria"= "orange4",
+                  "Acidimicrobiia"= "darkred","Actinobacteria"="brown","Thermoleophilia"= "brown3",
+                  "Bacteroidia"="darkorange3","Ignavibacteria"="darkorange","Kryptonia"="orange3",
+                  "Bdellovibrionia"= "red1","Oligoflexia" = "red3",
+                  "Campylobacteria"="cyan" ,#S1
+                  "Dehalococcoidia"="lightpink","JG30-KF-CM66"="palevioletred1","KD4-96"="hotpink",
+                  "Syntrophia"="yellow",
+                  "Elusimicrobia" = "burlywood","Lineage IIc"="burlywood1",
+                  "BD2-11 terrestrial group"="grey20","Gemmatimonadetes" = "black",
+                  "Methylomirabilia" = "aquamarine1",
+                  "Polyangia" = "purple1",
+                  "bacteriap25"="purple",
+                  "HDB-SIOI1093"="deepskyblue","Nitrospiria"="blue","Thermodesulfovibrionia"="royalblue","4-29-1"= "skyblue",
+                  "ABY1"="lightgreen", "Berkelbacteria"="#5CA595","Gracilibacteria"="darkolivegreen4","Parcubacteria"="green2",   "Saccharimonadia" = "green4",
+                  "Brocadiae"="firebrick2","Phycisphaerae"="orangered3",
+                  "Alphaproteobacteria" = "purple4", "Gammaproteobacteria"="mediumpurple2",
+                  "Omnitrophia"="darkorange3","Verrucomicrobiae"="darkorange1")
+
+library(lubridate) 
+seepage$date <- as.Date(seepage$date)
+#seepage$date <- as.Date(parse_date_time(seepage$date,c("%m/%d/%y")))
+
+seepage$Class <- factor (seepage$Class, levels=c("Others", 
+                                                             "Vicinamibacteria",
+                                                             "Actinobacteria", "Thermoleophilia",
+                                                             "Bacteroidia", "Kryptonia",
+                                                             "Bdellovibrionia", "Oligoflexia",
+                                                             "Dehalococcoidia","KD4-96",
+                                                             "Elusimicrobia",
+                                                             "Gemmatimonadetes",
+                                                             "Methylomirabilia",
+                                                             "Polyangia",
+                                                             "4-29-1","Nitrospiria", "Thermodesulfovibrionia",
+                                                             "ABY1","Berkelbacteria","Gracilibacteria","Parcubacteria", "Saccharimonadia" ,
+                                                             "Brocadiae","Phycisphaerae",
+                                                             "Alphaproteobacteria" , "Gammaproteobacteria", 
+                                                             "Omnitrophia"))
+
+###Take H14 as an example
+H14 <- read_excel("<path>/Waterlevel.xlsx", sheet = 1)
+seepage_H14 <- seepage[seepage$well == "H14",]
+
+ggplot()+
+  geom_line(data=H14, aes(Date, (WT-406)/6*50), color="black")+
+  geom_bar(data=seepage_H14, aes(date, value*100, fill=Class), stat="identity", alpha=0.6)+
+  scale_x_date (date_labels = "%b %Y", limits = as.Date(c("2013-2-1", "2023-6-1")),
+                breaks=as.Date(c("2013-5-1", "2014-5-1", "2015-5-1", "2016-5-1", "2017-5-1", "2018-5-1", "2019-5-1", "2020-5-1",
+                                 "2021-5-1", "2022-5-1")))+
+  scale_y_continuous(
+    name = "seepage contribution",
+    limits=c(0,50),breaks=c(0, 25, 50),
+    sec.axis = sec_axis(~./50*6+406, name = "water level [MAMSL]")) +
+  
+  theme_classic()+theme(text=element_text(size=14))+
+  scale_fill_manual(values=set_colors)+
+  theme_bw()+
+  theme(legend.position="bottom")+
+  theme(legend.key.size = unit(0.2, "cm"))+
+  theme(axis.text.x = element_text(angle = 60, vjust = 0.5, hjust=0.5))
+
+ggsave("H14_seepage.jpg", width = 14, height = 6)
