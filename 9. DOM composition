@@ -1,1 +1,300 @@
+getwd()
+setwd("<path>/DOM")
 
+library("ggplot2") 
+library("phyloseq")
+library(dplyr)
+library(ade4)
+library(vegan)
+library(ecodist)
+library(Hmisc)
+library(GGally)
+#library(picante)
+library(reshape2)
+library(stringr)
+library(ggplot2)
+library(plotrix)
+
+
+set_colors_well <- c("H14"= "green1" , # Well H14
+                     "H32"= "cyan4", # well H32
+                     "H41"= "#008DD2","H43"= "lightgoldenrod4",# well H41 and 43
+                     "H51"= "#FBC58C", "H52"= "mediumpurple3", "H53"= "plum") 
+
+
+######################read and change form###########################################################
+DOM <- readRDS("DOM_2023.rds")
+
+DOM_df <- DOM
+DOM_df$sample <- paste0(DOM_df$wells, ".PNK", DOM_df$PNK)
+DOM_df_sim <- DOM_df[,c(1,6,5)]
+DOM_df_dcast <- dcast(DOM_df_sim, sample~formula, value.var="Intensity")
+DOM_df_dcast<- data.frame(DOM_df_dcast)
+rownames(DOM_df_dcast) <- DOM_df_dcast$sample
+DOM_df_dcast <- DOM_df_dcast[,-1]
+DOM_df_dcast[is.na(DOM_df_dcast)] <- 0
+rowSums(DOM_df_dcast)
+
+DOM_ori <- DOM
+DOM <- DOM_df_dcast
+
+rm(DOM_df, DOM_df_dcast, DOM_df_sim)
+
+#rownames are formula
+DOM <- data.frame(t(DOM))
+
+##regular expression
+extract_elements <- function(formula){
+  elements <- list(C=0, H=0, O=0, N=0)
+  pattern <- "([A-Z][a-z]?)(\\d*)"
+  matches <- gregexpr(pattern, formula, perl = TRUE)
+  matches <- regmatches(formula, matches)[[1]]
+
+  for (match in matches) {
+    element <- sub(pattern, "\\1", match)
+    count <- sub(pattern, "\\2", match)
+    count <- ifelse(count == "", 1, as.numeric(count))
+    if (element %in% names(elements)) {
+      elements[[element]] <- elements[[element]] + count
+    }
+  }
+  
+  return(elements)
+}
+
+elements_counts <- lapply(rownames(DOM), extract_elements)
+elements_df <- do.call(rbind, lapply(elements_counts, as.data.frame))
+rownames(elements_df) <- rownames(DOM)
+
+DOM_cla <- elements_df
+DOM_cla$H_C <- DOM_cla$H/DOM_cla$C
+DOM_cla$O_C <- DOM_cla$O/DOM_cla$C
+DOM_cla$N_C <- DOM_cla$N/DOM_cla$C
+
+
+ggplot(DOM_cla, aes(x=O_C, y=H_C)) + 
+  geom_point()
+
+DOM_cla$Carbohydrate <- NA
+DOM_cla$Carbohydrate[DOM_cla$H_C >= 1.53 & DOM_cla$H_C <= 2.20 & DOM_cla$O_C >= 0.56 & DOM_cla$O_C <= 1.23] <- "Carbohydrate"
+
+DOM_cla$Con_aro <- NA
+DOM_cla$Con_aro[DOM_cla$H_C >= 0.2 & DOM_cla$H_C <= 0.67 & DOM_cla$O_C >= 0 & DOM_cla$O_C <= 0.67] <- "Con_aro"
+
+DOM_cla$Lignin <- NA
+DOM_cla$Lignin[DOM_cla$H_C >= 0.86 & DOM_cla$H_C <= 1.34 & DOM_cla$O_C >= 0.21 & DOM_cla$O_C <= 0.44] <- "Lignin"
+
+DOM_cla$Lipid <- NA
+DOM_cla$Lipid[DOM_cla$H_C >= 1.34 & DOM_cla$H_C <= 2.18 & DOM_cla$O_C >= 0.01 & DOM_cla$O_C <= 0.35] <- "Lipid"
+
+DOM_cla$proteins <- NA
+DOM_cla$proteins[DOM_cla$H_C >= 1.5 & DOM_cla$H_C <= 2.2 & DOM_cla$O_C >= 0.2 & DOM_cla$O_C <= 0.6&  DOM_cla$N_C>= 0.05] <- "proteins"
+
+DOM_cla$Unsa_hydro <- NA
+DOM_cla$Unsa_hydro[DOM_cla$H_C >= 0.67 & DOM_cla$H_C <= 1.5 & DOM_cla$O_C >= 0 & DOM_cla$O_C <= 0.1] <- "Unsa_hydro"
+
+write.csv(DOM_cla, "whole_DOM_classification_6.csv")
+
+Dom_cla <- read.csv("whole_DOM_classification_6.csv")
+a <-levels( factor(Dom_cla$cla))
+
+DOM_color <- c("Others" = "black", "Proteins"="orange", "Carbohydrate"="green", "Con_aro"="pink", "Lignin"="purple",  "Lipid"="sky blue","Unsa_hydro"="sienna", "Carbohydrate.proteins"="dark green",
+               "Lipid.proteins"="royal blue", "Lipid.Unsa_hydro"="red2")
+
+
+Dom_cla$cla <- factor(Dom_cla$cla, levels=c("Others","Carbohydrate","Con_aro", "Lignin","Lipid","Proteins","Unsa_hydro","Carbohydrate.proteins","Lipid.proteins", "Lipid.Unsa_hydro"))
+
+########################################################Supplementary Fig. 9##########################################################################################################
+
+###GW
+load("/data/AquaData/ke36dar/one_manuscript/analysis/all_data_using.phyloseq")
+data1 <- subset_samples(data, sample_data(data)$well %in% c("H14", "H32", "H41", "H43", "H51", "H52", "H53"))
+DOM_GW <- DOM
+colnames(DOM_GW) <- gsub("_", ".", colnames(DOM_GW), fixed=TRUE)
+DOM_GW <- DOM_GW[,colnames(DOM_GW) %in% sample_names(data1)]
+DOM_GW <- DOM_GW[rowSums(DOM_GW)>0,]
+
+DOM_GW_cla <- Dom_cla[rownames(DOM_cla) %in% rownames(DOM_GW),]
+
+Dom_cla$Cla <- factor(Dom_cla$Cla, levels=c("Others","Carbohydrate","Con_aro", "Lignin","Lipid","proteins","Unsa_hydro","Carbohydrate.proteins","Lipid.proteins", "Lipid.Unsa_hydro"))
+
+ggplot(DOM_GW_cla, aes(x=O_C, y=H_C)) + 
+  geom_point(aes(color=cla), alpha=0.6)+
+  scale_color_manual(values=DOM_color)+
+  theme_classic()
+
+ggsave("GW_DOM_cla.jpg", width = 8, height = 5)
+
+DOM1 <- data.frame(DOM_GW)
+DOM1$rownames <- rownames(DOM1)
+meta <- data.frame(sample_data(data1))
+DOM_melt <- melt(DOM1)
+
+DOM_melt$date <- meta$date[match(DOM_melt$variable, rownames(meta))]
+DOM_melt$well <- meta$well[match(DOM_melt$variable, rownames(meta))]
+DOM_melt$cluster <- Dom_cla$cla[match(DOM_melt$rownames, Dom_cla$X)]
+which(is.na(DOM_melt$cluster))
+
+DOM_melt$cluster <- factor(DOM_melt$cluster, levels=c("Others","Carbohydrate","Con_aro", "Lignin","Lipid","Proteins","Unsa_hydro","Carbohydrate.proteins","Lipid.proteins", "Lipid.Unsa_hydro"))
+DOM_melt$well <- factor(DOM_melt$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+
+ggplot(DOM_melt, aes(date, value, fill=cluster))+
+  geom_bar(stat="identity", width =20, alpha=0.6)+facet_wrap(~well, ncol=1, strip.position = "right")+
+  scale_fill_manual(values=DOM_color)+
+  theme_bw()+
+  scale_x_date (date_labels = "%b %Y", limits = as.Date(c("2013-2-1", "2023-6-1")),
+                breaks=as.Date(c("2013-5-1", "2014-5-1", "2015-5-1", "2016-5-1", "2017-5-1", "2018-5-1", "2019-5-1", "2020-5-1",
+                                 "2021-5-1", "2022-5-1")))+
+  theme(axis.text.x = element_text(angle = 270, vjust = 0.5, hjust = 0.5))+
+  theme(legend.position="bottom")+
+  theme(legend.key.size = unit(0.2, "cm"))
+
+ggsave("temporal GW_dom.jpg", width = 10, height = 7)
+
+
+########################################################Fig. 5C and 6D##########################################################################################
+smooth <- function(y ){
+  h <- c(head(y, 1), mean(head(y, 3)))
+  t <- c(mean(tail(y, 3)), tail(y, 1))
+  m <- stats::convolve(y, rep(1/5, 5), type = "filter")
+  c(h, m, t)
+}
+
+well_var <- c("H14", "H32", "H41", "H43", "H51", "H52", "H53")
+
+
+turnover <- as.data.frame(matrix(c(NA), nrow=7, ncol=16))
+rownames(turnover) <- well_var
+colnames(turnover) <- c("time_dom_P", "time_dom_R2", "time_dom_slope", "time_dom_mantel_P", "time_dom_mantel_R",
+                        "time_bac_P", "time_bac_R2", "time_bac_slope", "time_bac_mantel_P", "time_bac_mantel_R",
+                        "bac_dom_mantel_P", "bac_dom_mantel_R","bac_dom_ori_P", "bac_dom_ori_R2", "bac_dom_agg_P", "bac_dom_agg_R2"
+)
+
+for (i in well_var){
+  physeq <- subset_samples(data, sample_data(data)$well == i)
+  
+  dom_ir1 <- DOM_GW[,colnames(DOM_GW)%in%sample_names(physeq)]
+  dom_ir1 <- data.frame(t(dom_ir1))
+  physeq <- subset_samples(physeq, sample_names(physeq) %in% rownames(dom_ir1))
+  physeq <- prune_taxa(taxa_sums(physeq)>0, physeq)
+  dom_ir1 <- dom_ir1[match(sample_names(physeq),rownames(dom_ir1)),]
+  physeq <- transform_sample_counts(physeq, function(x)100*x/sum(x))
+  
+  dist_H <- bcdist(dom_ir1)
+  similar <- 1-dist_H
+  phy_dis <- phyloseq::distance(physeq, "bray")
+  bac_similar <- 1-phy_dis
+  
+  
+  Day <- data.frame(cbind(rownames(sample_data(physeq)), sample_data(physeq)$date-(min(sample_data(physeq)$date)-1)))
+  rownames(Day) <- Day$X1
+  Day$X1 <- NULL
+  model <- lm(similar~dist(Day))
+  sum <- summary(model)
+  dfH <- data.frame(cbind(similar, bac_similar, dist(Day)))
+  dfH$well <- i
+  names(dfH) <- c("dom_sim", "bac_sim","Day", "well")
+  assign(paste0("dfH_",i), dfH)
+  
+  dfH$month <- ((dfH$Day+15)%/%30)
+  
+  ag2 <- dfH %>%
+    group_by(month) %>%
+    summarise(mean_dom=mean(dom_sim, na.rm=TRUE),
+              mean_bac=mean(bac_sim, na.rm=TRUE),
+              se_dom = std.error(dom_sim, na.rm=TRUE),
+              se_bac=std.error(bac_sim, na.rm=TRUE)
+    )
+  
+  
+  ag2$smooth_dom <- smooth(ag2$mean_dom)
+  ag2$smooth_bac <- smooth(ag2$mean_bac)
+  ag2$day <- ag2$month*30
+  
+  model <- lm(dfH$dom_sim~dfH$Day)
+  sum <- summary(model)
+  
+  turnover[which(well_var==i),1] <- sum$coefficients[8]
+  turnover[which(well_var==i),2] <- round(sum$adj.r.squared,2)
+  turnover[which(well_var==i),3] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  set.seed(100)
+  mantel <- mantel.rtest(dist_H, dist(Day))
+  turnover[which(well_var==i), 4] <- mantel$pvalue
+  turnover[which(well_var==i), 5] <- mantel$obs
+  
+  model <- lm(dfH$bac_sim~dfH$Day)
+  sum <- summary(model)
+  
+  turnover[which(well_var==i),6] <- sum$coefficients[8]
+  turnover[which(well_var==i),7] <- round(sum$adj.r.squared,2)
+  turnover[which(well_var==i),8] <- formatC(coef(model)[2], format = "e", digits = 2)
+  
+  set.seed(100)
+  mantel <- mantel.rtest(phy_dis, dist(Day))
+  turnover[which(well_var==i), 9] <- mantel$pvalue
+  turnover[which(well_var==i), 10] <- mantel$obs
+  
+  set.seed(100)
+  mantel <- mantel.rtest(dist_H, phy_dis)
+  turnover[which(well_var==i), 11] <- mantel$pvalue
+  turnover[which(well_var==i), 12] <- mantel$obs
+  
+  a <- rcorr(dfH$dom_sim, dfH$bac_sim, type="pearson")
+  
+  turnover[which(well_var==i),13] <- a$P[2]
+  turnover[which(well_var==i),14] <- round(a$r[2],2)
+  
+  a <- rcorr(ag2$mean_dom, ag2$mean_bac, type="pearson")
+  
+  turnover[which(well_var==i),15] <- a$P[2]
+  turnover[which(well_var==i),16] <- round(a$r[2],2)
+  
+  
+  assign("turnover", turnover)
+  
+  
+  ggplot()+
+    geom_point(data=dfH,aes(x=Day, y=dom_sim), color="burlywood", shape=17)+
+    geom_smooth(data=dfH,aes(x=Day, y=dom_sim),method="lm", se=FALSE, color="black", linetype = "solid")+
+    geom_point(data=dfH,aes(x=Day, y=bac_sim), color="#A2D9F7")+
+    geom_smooth(data=dfH,aes(x=Day, y=bac_sim),method="lm", se=FALSE, color="black", linetype = "dashed")+
+    
+    geom_point(data=ag2, aes(x=day, y=mean_dom), color="red",shape=17, size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean_dom-se_dom, ymax=mean_dom+se_dom), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    geom_point(data=ag2, aes(x=day, y=mean_bac), color="red", size=2, alpha=0.35)+
+    geom_errorbar(data=ag2,aes(x=day,ymin=mean_bac-se_bac, ymax=mean_bac+se_bac), colour="red", width=0.2, size=0.2, alpha=0.35)+
+    
+    geom_line(data=ag2, aes(x=day, y=smooth_dom), color="blue", size=1, alpha=0.6, linetype = "solid")+
+    geom_line(data=ag2, aes(x=day, y=smooth_bac), color="blue", size=1, alpha=0.6, linetype = "dashed")+
+    theme_classic()+
+    ylim(0,1)+
+    ylab("community similarity") + 
+    xlab("Day difference")+
+    theme(strip.text.x = element_text(size = 16))+
+    theme(strip.background =element_rect(fill="#A2D9F7"))+
+    theme(legend.position="none")+
+    theme(axis.title=element_text(size=14), axis.text=element_text(size=14), legend.text=element_text(size=14))+
+    scale_x_continuous(breaks=seq(0, 3285, 365))+
+    geom_vline(xintercept = seq(0, 3285, 365), linetype="dashed", 
+               color = "grey", size=0.5)
+  ggsave(paste0(i,"turnover_similarity.jpg"), width=7, height=5)
+  
+}
+
+
+dfH_all <- rbind(dfH_H14, dfH_H43, dfH_H41, dfH_H51, dfH_H32, dfH_H53,dfH_H52)
+
+dfH_all$well <- factor(dfH_all$well, levels=c("H14", "H43", "H41", "H51", "H32", "H53", "H52"))
+ggplot(dfH_all, aes(well, dom_sim, col=well))+
+  geom_boxplot()+
+  ylim(0,1)+
+  scale_color_manual(values=set_colors_well)+
+  stat_summary(fun = mean, geom = "crossbar", width = 0.75, size = 0.5, color = "red")+
+  theme_classic()
+ggsave("GW_dom_temporal variability function.jpg", width=7, height=5)
+
+data.frame(dfH_all) %>%
+  group_by(well)%>%
+  summarise(me=mean(dom_sim),
+            se=sd(dom_sim))
