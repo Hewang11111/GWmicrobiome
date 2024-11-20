@@ -1,0 +1,156 @@
+setwd("/home/ke36dar/He/one_manu/phyloseq")
+
+asv_tab <- read.table("ASVs_counts.tsv", sep="\t", header=TRUE)
+asv_tax <- read.table("ASVs_taxonomy.tsv", sep="\t", header=TRUE)
+meta <- read.csv("meta.csv")
+
+library("phyloseq") #1.42.0
+#packageVersion("phyloseq")
+library("ggplot2"); packageVersion("ggplot2")#3.4.4
+library(vegan)#2.6-4
+library(dplyr)#1.1.4
+library(grid)#4.2.2
+library(reshape2)#1.4.4
+library(Biostrings)#2.66.0
+library(stringr)#1.5.1
+
+###check identicial
+identical(rownames(meta), colnames(asv_tab))
+identical(rownames(asv_tab), rownames(asv_tax))
+
+#remove Eukaryota
+asv_tax1 <- asv_tax %>%
+  filter(Kingdom %in% c("Bacteria")) 
+  
+badTaxa <- subset(asv_tax1, Order=="Chloroplast"|Family=="Mitochondria")
+
+asv_tax <- asv_tax1 %>%
+  anti_join(badTaxa)
+
+rm(badTaxa, asv_tax1)
+
+asv_tab1 <- asv_tab %>%
+  filter(rownames(asv_tab) %in% rownames(asv_tax))
+
+asv_tab <- asv_tab1
+rm(asv_tab1)
+
+#check identicial
+identical(rownames(asv_tab), rownames(asv_tax))
+identical(rownames(meta), colnames(asv_tab))
+
+#check if reads are higher than 1000 and if 0 reads taxa exists
+which(rowSums(asv_tab)==0)
+which(colSums(asv_tab)<1000)
+
+data <- phyloseq(otu_table(as.matrix(asv_tab), taxa_are_rows = TRUE), sample_data(meta), tax_table(as.matrix(asv_tax)))
+save(data, file="all_data.phyloseq")
+
+################################# tree ###############
+
+
+
+############################################################stop#############################20240206############################################################
+#######################extract fasta 20240313###########################
+load("/data/AquaData/ke36dar/one_manuscript/analysis/all_data_using.phyloseq")
+fasta <- readDNAStringSet("/home/ke36dar/He/one_manu/phyloseq/ASVs_output.fa")
+fasta1 <- fasta[names(fasta)%in%rownames(tax_table(data)),]
+seq <- paste(fasta1)
+
+asv_fasta <- c(rbind(paste0(">",names(fasta1)), seq))
+write(asv_fasta, "all_data.fasta")
+
+
+
+
+
+########################new file directory###############
+setwd("C:/Users/He Wang/Desktop/aquadiva/done_HW/merge_20230503/quality control")
+library("phyloseq")
+packageVersion("phyloseq")
+
+
+##############################input tree#############
+library(ape)
+phylo_tree <- ape::read.tree(file="C:/Users/He Wang/Desktop/aquadiva/done_HW/merge_20230503/quality control/20130508.tre")
+ape::is.rooted(phylo_tree)
+
+phylo_tree_trim <- ape::keep.tip(phylo_tree, tip = rownames(asv_tab))
+
+identical(phylo_tree, phylo_tree_trim)
+plot(phylo_tree_trim)
+##########################reorder asv_tab and asv_tax
+asv_tab1 <- asv_tab[phylo_tree_trim$tip.label,]
+asv_tax1 <- asv_tax[phylo_tree_trim$tip.label,]
+
+identical(rownames(asv_tab1), phylo_tree_trim$tip.label)
+identical(rownames(asv_tax1), phylo_tree_trim$tip.label)
+identical(rownames(asv_tab), rownames(asv_tab))
+rm(asv_tab, asv_tax)
+###shannon diversity via vegan
+data <- phyloseq(otu_table(as.matrix(asv_tab1), taxa_are_rows = TRUE), sample_data(meta), tax_table(as.matrix(asv_tax1)), phylo_tree_trim)
+
+save(data, file="alldata_20230515_tree.phyloseq")
+
+meta$sum <- colSums(asv_tab1)
+ 
+meta %>%
+  filter(sum < 1000)
+
+#data1 <-subset_samples(data, colSums(otu_table(data))>1000)
+
+#save(data1, file="current_1000_20230502.phyloseq")
+
+#write.csv(estimate_richness(data, measure="Shannon"), "shannon_phyloseq.csv")
+
+meta_hydro <- read.csv("C:/Users/He Wang/Desktop/aquadiva/done_HW/merge_20230503/environment parameters/meta_hydroparameters.csv")
+rownames(meta_hydro) <- meta_hydro$X
+meta_hydro <- meta_hydro[,-1]
+identical(rownames(meta_hydro), rownames(sample_data(data)))
+identical(meta_hydro$well, sample_data(data)$well)
+sample_data()
+data <- phyloseq(otu_table(as.matrix(asv_tab1), taxa_are_rows = TRUE), sample_data(meta_hydro), tax_table(as.matrix(asv_tax1)), phylo_tree_trim)
+sample_data(data)$EC25
+
+meta_recharge <- read.csv("C:/Users/He Wang/Desktop/aquadiva/done_HW/merge_20230425/quality control/result_figures/major_wells_alpha_meta.csv")
+meta_hydro$recharge <- meta_recharge$recharge[match(rownames(meta_hydro), meta_recharge$X)]
+
+meta_hydro$recharge <- str_replace_all(meta_hydro$recharge,'decreasing', "Recession")
+meta_hydro$recharge <- str_replace_all(meta_hydro$recharge,'arising', "Recharge")
+meta_hydro$recharge <- str_replace_all(meta_hydro$recharge,'unknown', "Unknown")
+meta_hydro$recharge[is.na(meta_hydro$recharge)] <- "Unknown"
+
+meta_hydro$wl <- meta_recharge$wl[match(rownames(meta_hydro), meta_recharge$X)]
+
+data <- phyloseq(otu_table(as.matrix(asv_tab1), taxa_are_rows = TRUE), sample_data(meta_hydro), tax_table(as.matrix(asv_tax1)), phylo_tree_trim)
+
+save(data, file="all_data_tree_hydro.phyloseq")
+
+write.table(otu_table(data), "ASVs_tree_hydro.tsv", sep="\t", quote=F, col.names=NA)
+write.table(tax_table(data), "tax_tree_hydro.tsv", sep="\t", quote=F, col.names=NA)
+write.csv(sample_data(data), "meta_tree_hydro.csv")
+
+
+#################################################main wells###############################################################################
+data2 <- subset_samples(data, sample_data(data)$well %in% c("H14", "H32", "H41", "H43", "H51", "H52", "H53", "S1", "S2"))
+sum(taxa_sums(data2) ==0)
+data3 <- prune_taxa(taxa_sums(data2)>0, data2)
+
+save(data3, file="major wells/major_wells_tree_hydro.phyloseq")
+write.table(otu_table(data3), "major wells/ASVs_major_tree_hydro.tsv", sep="\t", quote=F, col.names=NA)
+write.table(tax_table(data3), "major wells/Tax_major_tree_hydro.tsv", sep="\t", quote=F, col.names=NA)
+
+#write.csv(otu_table(data3), "major wells/asv_tab.csv")
+#write.csv(tax_table(data3), "major wells/asv_tax.csv")
+write.csv(sample_data(data3), "major wells/meta_major_tree_hydro.csv")
+
+#########################################build a root for phylogenetic tree (not really done here)###########################
+install.packages("iCAMP")
+library(iCAMP)
+pd.big <- pdist.big(phylo_tree_trim)
+root_tree <- midpoint.root.big(phylo_tree_trim, pd.spname = pd.big$tip.label, pd.wd=pd.big$pd.wd, pd.desc = pd.big$pd.file)
+ape::is.rooted(root_tree$tree)
+data_root <- phyloseq(otu_table(as.matrix(asv_tab1), taxa_are_rows = TRUE), sample_data(meta), tax_table(as.matrix(asv_tax1)), root_tree$tree)
+data2_root <- subset_samples(data_root, sample_data(data_root)$well %in% c("H14", "H32", "H41", "H43", "H51", "H52", "H53", "S1", "S2"))
+data3_root <- prune_taxa(taxa_sums(data2_root)>0, data2_root)
+save(data3_root, file="major wells/major_wells_root.phyloseq")
